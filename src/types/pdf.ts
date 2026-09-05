@@ -43,6 +43,8 @@ export interface BatchScopeConfig {
   rangeString: string; // e.g. "1-50, 100-200"
 }
 
+export type UniquePageMode = 'single' | 'template' | 'list';
+
 export interface QRCodeItem {
   id: string;
   label: string;
@@ -59,6 +61,11 @@ export interface QRCodeItem {
   enableLink: boolean; // active clickable hyperlink in the exported PDF
   showLabel: boolean; // visual identification label rendered on the page
   labelPosition: 'top' | 'bottom'; // position of the label relative to QR
+  uniqueMode?: UniquePageMode; // 'single' | 'template' | 'list'
+  customUrlList?: string[]; // array of distinct URLs (line 1 = page 1, etc.)
+  customLabelList?: string[]; // optional array of distinct labels
+  pageUrlOverrides?: Record<number, string>; // manual override for specific page number
+  pageLabelOverrides?: Record<number, string>; // manual override for specific page label
 }
 
 export interface ProcessingProgress {

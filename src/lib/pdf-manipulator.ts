@@ -1,7 +1,13 @@
 import { PDFDocument, rgb, StandardFonts, PDFString } from 'pdf-lib';
 import { QRConfig, QRCodeItem, ProcessingProgress, PageShiftConfig } from '@/types/pdf';
 import { mmToPt, canvasTopLeftToPdfBottomLeft, parsePageRange } from './coordinates';
-import { interpolateQRText, generateQRPngBytes } from './qr-generator';
+import {
+  interpolateQRText,
+  generateQRPngBytes,
+  resolvePageContent,
+  resolvePageLabel,
+  isItemDynamicPerPage,
+} from './qr-generator';
 
 export interface ModifyPdfOptions {
   originalBytes: Uint8Array;
@@ -27,6 +33,8 @@ function drawQRWithLinkAndLabel({
   totalPages,
   font,
   fontBold,
+  resolvedContent,
+  resolvedLabel,
 }: {
   doc: PDFDocument;
   page: import('pdf-lib').PDFPage;
@@ -40,6 +48,8 @@ function drawQRWithLinkAndLabel({
   totalPages: number;
   font: import('pdf-lib').PDFFont;
   fontBold: import('pdf-lib').PDFFont;
+  resolvedContent?: string;
+  resolvedLabel?: string;
 }) {
   // 1. Draw QR Image
   page.drawImage(image, {
@@ -49,8 +59,11 @@ function drawQRWithLinkAndLabel({
     height: qrHeightPt,
   });
 
+  const finalLabel = (resolvedLabel ?? resolvePageLabel(item, pageNum, totalPages)).trim();
+  const finalContent = (resolvedContent ?? resolvePageContent(item, pageNum, totalPages)).trim();
+
   const labelHeight = 12;
-  const isLabelVisible = item.showLabel !== false && Boolean(item.label?.trim());
+  const isLabelVisible = item.showLabel !== false && Boolean(finalLabel);
   const labelPos = item.labelPosition || 'bottom';
   let labelY = qrDrawY - labelHeight - 2;
 
@@ -73,11 +86,11 @@ function drawQRWithLinkAndLabel({
 
     // Fit text inside label
     const fontSize = 7;
-    let labelText = item.label.trim();
+    let labelText = finalLabel;
     while (fontBold.widthOfTextAtSize(labelText, fontSize) > qrWidthPt - 6 && labelText.length > 3) {
       labelText = labelText.slice(0, -1);
     }
-    if (labelText !== item.label.trim()) {
+    if (labelText !== finalLabel) {
       labelText += '..';
     }
 
@@ -94,8 +107,8 @@ function drawQRWithLinkAndLabel({
   }
 
   // 3. Add Active Clickable Link Annotation
-  if (item.enableLink !== false && item.content?.trim()) {
-    let targetUrl = interpolateQRText(item.content, pageNum, totalPages).trim();
+  if (item.enableLink !== false && finalContent) {
+    let targetUrl = finalContent;
 
     // Ensure valid web URL scheme
     if (
@@ -163,7 +176,7 @@ export async function applyQRCodesLossless({
     const pageSet = new Set(
       parsePageRange(item.scope.mode, item.scope.rangeString, 1, totalPages)
     );
-    const isDynamic = /\{page\}|\{total\}|\{p\}/i.test(item.content);
+    const isDynamic = isItemDynamicPerPage(item);
     return {
       item,
       pageSet,
@@ -195,6 +208,7 @@ export async function applyQRCodesLossless({
       const img = await newDoc.embedPng(bytes);
       embeddedImageMap.set(id, img);
     }
+    const dynamicImageCache = new Map<string, import('pdf-lib').PDFImage>();
 
     const offsetPt = mmToPt(pageShift.offsetMm);
     const scale = Math.max(0.7, Math.min(1.0, pageShift.scaleContent));
@@ -262,11 +276,21 @@ export async function applyQRCodesLossless({
             }
           }
 
+          const pageContent = resolvePageContent(item, pageNum, totalPages);
+          const pageLabel = resolvePageLabel(item, pageNum, totalPages);
+
           let img = embeddedImageMap.get(item.id);
           if (isDynamic) {
-            const pageText = interpolateQRText(item.content, pageNum, totalPages);
-            const dynBytes = await generateQRPngBytes(pageText, item, 512);
-            img = await newDoc.embedPng(dynBytes);
+            const cacheKey = `${item.id}_${pageContent}`;
+            let cachedImg = dynamicImageCache.get(cacheKey);
+            if (!cachedImg) {
+              const dynBytes = await generateQRPngBytes(pageContent, item, 512);
+              cachedImg = await newDoc.embedPng(dynBytes);
+              if (dynamicImageCache.size < 500) {
+                dynamicImageCache.set(cacheKey, cachedImg);
+              }
+            }
+            img = cachedImg;
           }
 
           if (img) {
@@ -283,6 +307,8 @@ export async function applyQRCodesLossless({
               totalPages,
               font,
               fontBold,
+              resolvedContent: pageContent,
+              resolvedLabel: pageLabel,
             });
           }
         }
@@ -317,6 +343,7 @@ export async function applyQRCodesLossless({
     const img = await pdfDoc.embedPng(bytes);
     embeddedImageMap.set(id, img);
   }
+  const dynamicImageCache = new Map<string, import('pdf-lib').PDFImage>();
 
   const pageCount = pdfDoc.getPageCount();
 
@@ -340,11 +367,21 @@ export async function applyQRCodesLossless({
         pageHeightPt
       );
 
+      const pageContent = resolvePageContent(item, pageNum, totalPages);
+      const pageLabel = resolvePageLabel(item, pageNum, totalPages);
+
       let imageToDraw = embeddedImageMap.get(item.id);
       if (isDynamic) {
-        const pageText = interpolateQRText(item.content, pageNum, totalPages);
-        const dynamicBytes = await generateQRPngBytes(pageText, item, 512);
-        imageToDraw = await pdfDoc.embedPng(dynamicBytes);
+        const cacheKey = `${item.id}_${pageContent}`;
+        let cachedImg = dynamicImageCache.get(cacheKey);
+        if (!cachedImg) {
+          const dynamicBytes = await generateQRPngBytes(pageContent, item, 512);
+          cachedImg = await pdfDoc.embedPng(dynamicBytes);
+          if (dynamicImageCache.size < 500) {
+            dynamicImageCache.set(cacheKey, cachedImg);
+          }
+        }
+        imageToDraw = cachedImg;
       }
 
       if (imageToDraw) {
@@ -361,6 +398,8 @@ export async function applyQRCodesLossless({
           totalPages,
           font,
           fontBold,
+          resolvedContent: pageContent,
+          resolvedLabel: pageLabel,
         });
       }
     }

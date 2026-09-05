@@ -16,7 +16,7 @@ import { StatusBar } from '@/components/StatusBar';
 import { ProgressModal } from '@/components/ProgressModal';
 import { parsePdfDocument, getPdfjs } from '@/lib/pdf-service';
 import { generateSyntheticA5Pdf } from '@/lib/sample-pdf';
-import { generateQRDataUrl } from '@/lib/qr-generator';
+import { generateQRDataUrl, resolvePageContent } from '@/lib/qr-generator';
 import {
   parsePageRange,
   getPresetPosition,
@@ -43,6 +43,7 @@ const INITIAL_QR_ITEMS: QRCodeItem[] = [
     enableLink: true,
     showLabel: true,
     labelPosition: 'bottom',
+    uniqueMode: 'template',
   },
 ];
 
@@ -84,12 +85,14 @@ export default function Home() {
 
   const activeQR = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
 
-  // Generate previews for each QR code
+  // Generate previews for each QR code matching active page
   useEffect(() => {
     let isCurrent = true;
+    const totalPages = documentInfo?.pageCount || 1;
 
     qrItems.forEach((item) => {
-      generateQRDataUrl(item.content || 'https://example.com', item, 256)
+      const pageContent = resolvePageContent(item, currentPage, totalPages) || 'https://example.com';
+      generateQRDataUrl(pageContent, item, 256)
         .then((url) => {
           if (isCurrent) {
             setQrPreviews((prev) => ({ ...prev, [item.id]: url }));
@@ -101,7 +104,7 @@ export default function Home() {
     return () => {
       isCurrent = false;
     };
-  }, [qrItems]);
+  }, [qrItems, currentPage, documentInfo?.pageCount]);
 
   // Compute map of target pages for each QR item
   const targetPagesPerQR = useMemo(() => {

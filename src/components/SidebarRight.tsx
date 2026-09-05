@@ -18,6 +18,13 @@ import {
   Copy,
   Tag,
   ExternalLink,
+  Upload,
+  Sparkles,
+  FileText,
+  RotateCcw,
+  ListOrdered,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   QRCodeItem,
@@ -27,8 +34,10 @@ import {
   BatchScopeConfig,
   PageShiftConfig,
   ContentShiftZone,
+  UniquePageMode,
 } from '@/types/pdf';
 import { getPresetPosition } from '@/lib/coordinates';
+import { resolvePageContent, resolvePageLabel, interpolateQRText } from '@/lib/qr-generator';
 
 interface SidebarRightProps {
   qrItems: QRCodeItem[];
@@ -74,15 +83,91 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
   qrPreviewUrl,
 }) => {
   const activeQR = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   if (!activeQR) return null;
+
+  const uniqueMode: UniquePageMode =
+    activeQR.uniqueMode ||
+    (activeQR.customUrlList && activeQR.customUrlList.length > 0
+      ? 'list'
+      : /\{page|\{total/i.test(activeQR.content)
+      ? 'template'
+      : 'single');
 
   const insertPlaceholder = (tag: string) => {
     onChangeActiveQRConfig({ content: activeQR.content + tag });
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        const lines = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean);
+        onChangeActiveQRConfig({
+          uniqueMode: 'list',
+          customUrlList: lines,
+        });
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const handleGenerateSampleSeries = () => {
+    const count = Math.max(totalPages, 1);
+    const sampleUrls: string[] = [];
+    for (let i = 1; i <= count; i++) {
+      const padded = String(i).padStart(3, '0');
+      sampleUrls.push(`https://example.com/katalog?item=PROD-${padded}&page=${i}`);
+    }
+    onChangeActiveQRConfig({
+      uniqueMode: 'list',
+      customUrlList: sampleUrls,
+    });
+  };
+
+  const currentOverrideUrl = activeQR.pageUrlOverrides?.[currentPage] || '';
+  const resolvedCurrentUrl = resolvePageContent(activeQR, currentPage, totalPages);
+  const resolvedCurrentLabel = resolvePageLabel(activeQR, currentPage, totalPages);
+  const isPageOverridden = Boolean(activeQR.pageUrlOverrides && activeQR.pageUrlOverrides[currentPage]);
+
+  const handleSetPageOverride = (val: string) => {
+    const overrides = { ...(activeQR.pageUrlOverrides || {}) };
+    if (val.trim()) {
+      overrides[currentPage] = val;
+    } else {
+      delete overrides[currentPage];
+    }
+    onChangeActiveQRConfig({ pageUrlOverrides: overrides });
+  };
+
+  const handleResetPageOverride = () => {
+    if (activeQR.pageUrlOverrides && activeQR.pageUrlOverrides[currentPage] !== undefined) {
+      const overrides = { ...activeQR.pageUrlOverrides };
+      delete overrides[currentPage];
+      onChangeActiveQRConfig({ pageUrlOverrides: overrides });
+    }
+  };
+
   return (
     <aside className="w-80 border-l border-border bg-sidebar flex flex-col h-full shrink-0 select-none overflow-y-auto">
+      {/* Hidden file input for importing TXT/CSV */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept=".txt,.csv"
+        className="hidden"
+      />
+
       {/* Panel Title */}
       <div className="p-3.5 border-b border-border flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -169,38 +254,207 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
           </div>
         </div>
 
-        {/* Section 1: Content & Dynamic Template */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-400">
-            <span className="flex items-center gap-1.5">
-              <Link className="w-3.5 h-3.5 text-blue-400" /> Treść / Link URL
+        {/* Section 1: Mode Selector & URL Content */}
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-300">
+            <span className="flex items-center gap-1.5 font-semibold text-zinc-200">
+              <Link className="w-3.5 h-3.5 text-blue-400" /> Kody QR na stronach:
             </span>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => insertPlaceholder('{page}')}
-                className="px-1.5 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded border border-zinc-700 font-mono transition"
-                title="Wstaw zmienną numeru strony"
-              >
-                +&#123;page&#125;
-              </button>
-              <button
-                type="button"
-                onClick={() => insertPlaceholder('{total}')}
-                className="px-1.5 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded border border-zinc-700 font-mono transition"
-                title="Wstaw zmienną łącznej liczby stron"
-              >
-                +&#123;total&#125;
-              </button>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="grid grid-cols-3 gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800">
+            <button
+              type="button"
+              onClick={() => onChangeActiveQRConfig({ uniqueMode: 'single' })}
+              className={`py-1 text-[10px] font-medium rounded transition text-center cursor-pointer ${
+                uniqueMode === 'single'
+                  ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }`}
+            >
+              Stały kod
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeActiveQRConfig({ uniqueMode: 'template' })}
+              className={`py-1 text-[10px] font-medium rounded transition text-center cursor-pointer ${
+                uniqueMode === 'template'
+                  ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }`}
+            >
+              Wzorzec &#123;p&#125;
+            </button>
+            <button
+              type="button"
+              onClick={() => onChangeActiveQRConfig({ uniqueMode: 'list' })}
+              className={`py-1 text-[10px] font-medium rounded transition text-center cursor-pointer ${
+                uniqueMode === 'list'
+                  ? 'bg-blue-600 text-white font-semibold shadow-xs'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }`}
+            >
+              Lista linków
+            </button>
+          </div>
+
+          {/* Sub-Panel: Mode 1 - Single / Static */}
+          {uniqueMode === 'single' && (
+            <div className="space-y-1.5">
+              <label className="text-[10px] text-zinc-400 block">
+                Stały link (taki sam dla wszystkich stron w zasięgu):
+              </label>
+              <textarea
+                value={activeQR.content}
+                onChange={(e) => onChangeActiveQRConfig({ content: e.target.value })}
+                rows={2}
+                placeholder="https://example.com/moj-link"
+                className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-blue-500 resize-none"
+              />
+            </div>
+          )}
+
+          {/* Sub-Panel: Mode 2 - Dynamic Template */}
+          {uniqueMode === 'template' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                <span>Szablon z numeracją stron:</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => insertPlaceholder('{page}')}
+                    className="px-1 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded border border-zinc-700 font-mono transition"
+                    title="Wstaw {page} (1, 2, 3...)"
+                  >
+                    +&#123;page&#125;
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertPlaceholder('{page:03d}')}
+                    className="px-1 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded border border-zinc-700 font-mono transition"
+                    title="Wstaw {page:03d} (001, 002, 003...)"
+                  >
+                    +&#123;001&#125;
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => insertPlaceholder('{total}')}
+                    className="px-1 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded border border-zinc-700 font-mono transition"
+                    title="Wstaw {total} (łączna liczba stron)"
+                  >
+                    +&#123;total&#125;
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={activeQR.content}
+                onChange={(e) => onChangeActiveQRConfig({ content: e.target.value })}
+                rows={2}
+                placeholder="https://example.com/item?page={page}&serial={page:03d}"
+                className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-blue-500 resize-none"
+              />
+              <p className="text-[9px] text-zinc-500 leading-tight">
+                Każda strona automatycznie otrzyma unikalny kod QR z własnym numerem strony.
+              </p>
+            </div>
+          )}
+
+          {/* Sub-Panel: Mode 3 - Custom URL List (Paste or CSV) */}
+          {uniqueMode === 'list' && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-zinc-400">
+                  Lista linków (1 linia = 1 strona):
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-1.5 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 flex items-center gap-1 transition"
+                    title="Wczytaj z pliku TXT lub CSV"
+                  >
+                    <Upload className="w-2.5 h-2.5 text-blue-400" /> Plik TXT/CSV
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleGenerateSampleSeries}
+                    className="px-1.5 py-0.5 text-[9px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded border border-zinc-700 flex items-center gap-1 transition"
+                    title="Wygeneruj przykładową serię dla wszystkich stron"
+                  >
+                    <Sparkles className="w-2.5 h-2.5 text-amber-400" /> Przykłady
+                  </button>
+                </div>
+              </div>
+
+              <textarea
+                value={(activeQR.customUrlList || []).join('\n')}
+                onChange={(e) =>
+                  onChangeActiveQRConfig({
+                    customUrlList: e.target.value.split('\n'),
+                  })
+                }
+                rows={4}
+                placeholder={`https://example.com/produkt-1\nhttps://example.com/produkt-2\nhttps://example.com/produkt-3`}
+                className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-[11px] text-zinc-100 font-mono focus:outline-none focus:border-blue-500 resize-y"
+              />
+
+              {/* Status info bar */}
+              <div className="flex items-center justify-between text-[10px] px-2 py-1 bg-zinc-900/90 rounded border border-zinc-800">
+                <span className="text-zinc-400 flex items-center gap-1">
+                  <ListOrdered className="w-3 h-3 text-blue-400" /> Wczytano wierszy:{' '}
+                  <strong className="text-zinc-200 font-mono">
+                    {(activeQR.customUrlList || []).filter((l) => l.trim().length > 0).length}
+                  </strong>
+                </span>
+                <span className="text-zinc-400 font-mono">
+                  Dokument: <strong className="text-zinc-200">{totalPages}</strong> stron
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Active Page Live Inspector & Override Card */}
+          <div className="p-2.5 bg-zinc-950/70 border border-zinc-800 rounded-lg space-y-2">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-zinc-300 font-semibold flex items-center gap-1.5">
+                <FileText className="w-3 h-3 text-blue-400" /> Dla Strony {currentPage}:
+              </span>
+              {isPageOverridden ? (
+                <button
+                  type="button"
+                  onClick={handleResetPageOverride}
+                  className="text-[9px] text-amber-400 hover:text-amber-300 flex items-center gap-1 transition"
+                  title="Przywróć kod z szablonu/listy dla tej strony"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" /> Przywróć wzorzec
+                </button>
+              ) : (
+                <span className="text-[9px] text-emerald-400 flex items-center gap-0.5">
+                  <CheckCircle2 className="w-2.5 h-2.5" /> Ze wzorca
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <input
+                type="text"
+                value={isPageOverridden ? currentOverrideUrl : resolvedCurrentUrl}
+                onChange={(e) => handleSetPageOverride(e.target.value)}
+                placeholder="Unikalny link dla tej konkretnej strony"
+                className={`w-full bg-zinc-900 border rounded px-2 py-1 text-xs font-mono text-zinc-100 focus:outline-none ${
+                  isPageOverridden
+                    ? 'border-amber-500/80 ring-1 ring-amber-500/30'
+                    : 'border-zinc-700/80 focus:border-blue-500'
+                }`}
+              />
+              <p className="text-[9px] text-zinc-500 leading-tight">
+                {isPageOverridden
+                  ? '⚠️ Ta strona ma przypisany indywidualny link nadpisany ręcznie.'
+                  : 'Możesz edytować to pole, aby przypisać indywidualny kod tylko do tej strony.'}
+              </p>
             </div>
           </div>
-          <textarea
-            value={activeQR.content}
-            onChange={(e) => onChangeActiveQRConfig({ content: e.target.value })}
-            rows={2}
-            placeholder="https://example.com/verify?p={page}"
-            className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 text-xs text-zinc-100 font-mono focus:outline-none focus:border-blue-500 resize-none"
-          />
 
           {/* Small Preview Box */}
           {qrPreviewUrl && (
@@ -214,9 +468,11 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
                 />
               </div>
               <div className="text-[10px] text-zinc-400 leading-tight truncate">
-                <p className="text-zinc-200 font-medium">Podgląd: {activeQR.label}</p>
-                <p className="text-[9px] text-zinc-500 truncate mt-0.5">
-                  {activeQR.content}
+                <p className="text-zinc-200 font-medium">
+                  Podgląd (Strona {currentPage}): {resolvedCurrentLabel}
+                </p>
+                <p className="text-[9px] text-zinc-500 truncate mt-0.5 font-mono">
+                  {resolvedCurrentUrl}
                 </p>
               </div>
             </div>

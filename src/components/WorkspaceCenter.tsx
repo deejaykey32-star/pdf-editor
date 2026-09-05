@@ -16,6 +16,7 @@ import { PdfDocumentInfo, QRCodeItem, PageShiftConfig } from '@/types/pdf';
 import { renderActivePage, RenderTaskHandle } from '@/lib/pdf-service';
 import { InteractiveQRBox } from './InteractiveQRBox';
 import { mmToPt } from '@/lib/coordinates';
+import { resolvePageContent, resolvePageLabel } from '@/lib/qr-generator';
 
 interface WorkspaceCenterProps {
   documentInfo: PdfDocumentInfo | null;
@@ -326,28 +327,32 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
           )}
 
           {/* Interactive QR Overlay Layer for ALL QRs on this page */}
-          {activePageQRs.map((item) => (
-            <InteractiveQRBox
-              key={item.id}
-              qrConfig={item}
-              isSelected={item.id === activeQRId}
-              onSelect={() => onSelectQRId(item.id)}
-              onChange={(updated) => {
-                if (item.id === activeQRId) {
-                  onChangeActiveQRConfig(updated);
-                } else {
-                  onSelectQRId(item.id);
-                  onChangeActiveQRConfig(updated);
-                }
-              }}
-              pageWidthMm={currentPageDim.widthMm}
-              pageHeightMm={currentPageDim.heightMm}
-              displayScale={zoomScale}
-              qrPreviewUrl={qrPreviews[item.id]}
-              showSafetyMargin={showSafetyGuide && !isShiftActive}
-              label={item.label}
-            />
-          ))}
+          {activePageQRs.map((item) => {
+            const pageText = resolvePageContent(item, currentPage, documentInfo?.pageCount || 1);
+            const pageLabel = resolvePageLabel(item, currentPage, documentInfo?.pageCount || 1);
+            return (
+              <InteractiveQRBox
+                key={item.id}
+                qrConfig={{ ...item, content: pageText }}
+                isSelected={item.id === activeQRId}
+                onSelect={() => onSelectQRId(item.id)}
+                onChange={(updated) => {
+                  if (item.id === activeQRId) {
+                    onChangeActiveQRConfig(updated);
+                  } else {
+                    onSelectQRId(item.id);
+                    onChangeActiveQRConfig(updated);
+                  }
+                }}
+                pageWidthMm={currentPageDim.widthMm}
+                pageHeightMm={currentPageDim.heightMm}
+                displayScale={zoomScale}
+                qrPreviewUrl={qrPreviews[item.id]}
+                showSafetyMargin={showSafetyGuide && !isShiftActive}
+                label={pageLabel}
+              />
+            );
+          })}
 
           {/* Banner if page has NO QR assigned */}
           {activePageQRs.length === 0 && (
