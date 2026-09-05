@@ -3,8 +3,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   PdfDocumentInfo,
-  QRConfig,
-  BatchScopeConfig,
+  QRCodeItem,
   ProcessingProgress,
   AlignmentPreset,
   PageShiftConfig,
@@ -24,23 +23,31 @@ import {
 } from '@/lib/coordinates';
 import { applyQRCodesLossless, insertDedicatedQRPage } from '@/lib/pdf-manipulator';
 
-const DEFAULT_QR_CONFIG: QRConfig = {
-  content: 'https://example.com/verify?doc=A5&page={page}&total={total}',
-  sizeMm: 25,
-  xMm: 118, // bottom-right for A5 (148 - 25 - 5)
-  yMm: 180, // bottom-right for A5 (210 - 25 - 5)
-  errorCorrection: 'M',
-  marginModules: 1,
-  colorDark: '#000000',
-  colorLight: '#ffffff',
-  safetyMarginMm: 5,
-};
+const INITIAL_QR_ITEMS: QRCodeItem[] = [
+  {
+    id: 'qr-1',
+    label: 'Główny Kod QR',
+    content: 'https://example.com/verify?doc=A5&page={page}&total={total}',
+    sizeMm: 25,
+    xMm: 118, // bottom-right for A5 (148 - 25 - 5)
+    yMm: 180, // bottom-right for A5 (210 - 25 - 5)
+    errorCorrection: 'M',
+    marginModules: 1,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    safetyMarginMm: 5,
+    scope: {
+      mode: 'all',
+      rangeString: '1-100',
+    },
+  },
+];
 
 const DEFAULT_PAGE_SHIFT: PageShiftConfig = {
   enabled: false,
   zone: 'bottom',
-  offsetMm: 32, // 32mm reserved zone for QR banner
-  scaleContent: 0.90, // 90% content scaling
+  offsetMm: 32,
+  scaleContent: 0.90,
   autoPositionQR: true,
 };
 
@@ -49,13 +56,10 @@ export default function Home() {
   const [pdfDocProxy, setPdfDocProxy] = useState<any | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoomScale, setZoomScale] = useState<number>(1.15);
-  const [qrConfig, setQrConfig] = useState<QRConfig>(DEFAULT_QR_CONFIG);
+  const [qrItems, setQrItems] = useState<QRCodeItem[]>(INITIAL_QR_ITEMS);
+  const [activeQRId, setActiveQRId] = useState<string>('qr-1');
   const [pageShift, setPageShift] = useState<PageShiftConfig>(DEFAULT_PAGE_SHIFT);
-  const [batchScope, setBatchScope] = useState<BatchScopeConfig>({
-    mode: 'all',
-    rangeString: '1-100',
-  });
-  const [qrPreviewUrl, setQrPreviewUrl] = useState<string>('');
+  const [qrPreviews, setQrPreviews] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<ProcessingProgress>({
     currentPage: 0,
     totalPages: 0,
@@ -75,59 +79,139 @@ export default function Home() {
     rotation: 0,
   };
 
-  // Generate live preview of the QR code
+  const activeQR = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
+
+  // Generate previews for each QR code
   useEffect(() => {
     let isCurrent = true;
-    generateQRDataUrl(qrConfig.content || 'https://example.com', qrConfig, 256)
-      .then((url) => {
-        if (isCurrent) setQrPreviewUrl(url);
-      })
-      .catch((err) => console.error('Error generating QR preview:', err));
+
+    qrItems.forEach((item) => {
+      generateQRDataUrl(item.content || 'https://example.com', item, 256)
+        .then((url) => {
+          if (isCurrent) {
+            setQrPreviews((prev) => ({ ...prev, [item.id]: url }));
+          }
+        })
+        .catch((err) => console.error(`Error generating QR preview for ${item.id}:`, err));
+    });
 
     return () => {
       isCurrent = false;
     };
-  }, [qrConfig.content, qrConfig.errorCorrection, qrConfig.marginModules, qrConfig.colorDark, qrConfig.colorLight]);
+  }, [qrItems]);
 
-  // Automatically place QR inside reserved zone if Page Shift and autoPositionQR are enabled
-  useEffect(() => {
-    if (!pageShift.enabled || !pageShift.autoPositionQR) return;
+  // Compute map of target pages for each QR item
+  const targetPagesPerQR = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    const totalPages = documentInfo?.pageCount || 0;
 
-    const pageW = currentPageDim.widthMm;
-    const pageH = currentPageDim.heightMm;
-    const qrSize = qrConfig.sizeMm;
-    const offset = pageShift.offsetMm;
+    qrItems.forEach((item) => {
+      const pages = parsePageRange(
+        item.scope.mode,
+        item.scope.rangeString,
+        currentPage,
+        totalPages
+      );
+      map.set(item.id, new Set(pages));
+    });
 
-    if (pageShift.zone === 'bottom') {
-      const centerX = Number(((pageW - qrSize) / 2).toFixed(1));
-      const centerY = Number((pageH - offset + (offset - qrSize) / 2).toFixed(1));
-      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
-    } else if (pageShift.zone === 'top') {
-      const centerX = Number(((pageW - qrSize) / 2).toFixed(1));
-      const centerY = Number(((offset - qrSize) / 2).toFixed(1));
-      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
-    } else if (pageShift.zone === 'left') {
-      const centerX = Number(((offset - qrSize) / 2).toFixed(1));
-      const centerY = Number(((pageH - qrSize) / 2).toFixed(1));
-      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
-    } else if (pageShift.zone === 'right') {
-      const centerX = Number((pageW - offset + (offset - qrSize) / 2).toFixed(1));
-      const centerY = Number(((pageH - qrSize) / 2).toFixed(1));
-      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
+    return map;
+  }, [qrItems, currentPage, documentInfo]);
+
+  // Compute map of page -> count of QR codes
+  const pageQRCountMap = useMemo(() => {
+    const countMap = new Map<number, number>();
+    const totalPages = documentInfo?.pageCount || 0;
+
+    for (let p = 1; p <= totalPages; p++) {
+      let count = 0;
+      targetPagesPerQR.forEach((pageSet) => {
+        if (pageSet.has(p)) count++;
+      });
+      if (count > 0) {
+        countMap.set(p, count);
+      }
     }
-  }, [pageShift.enabled, pageShift.zone, pageShift.offsetMm, pageShift.autoPositionQR, currentPageDim.widthMm, currentPageDim.heightMm, qrConfig.sizeMm]);
 
-  // Compute set of targeted page numbers
-  const targetPages = useMemo(() => {
-    if (!documentInfo) return new Set<number>();
-    const pages = parsePageRange(
-      batchScope.mode,
-      batchScope.rangeString,
-      currentPage,
-      documentInfo.pageCount
+    return countMap;
+  }, [targetPagesPerQR, documentInfo]);
+
+  // Total distinct pages with at least one QR code
+  const totalTargetedPages = pageQRCountMap.size;
+
+  // Add a new QR item
+  const handleAddQR = () => {
+    const newIdx = qrItems.length + 1;
+    const newId = `qr-${Date.now()}`;
+    const newQR: QRCodeItem = {
+      id: newId,
+      label: `Kod ${newIdx}`,
+      content: `https://example.com/item-${newIdx}?page={page}`,
+      sizeMm: 22,
+      xMm: 15,
+      yMm: 180,
+      errorCorrection: 'M',
+      marginModules: 1,
+      colorDark: '#000000',
+      colorLight: '#ffffff',
+      safetyMarginMm: 5,
+      scope: {
+        mode: 'current',
+        rangeString: '',
+      },
+    };
+
+    setQrItems((prev) => [...prev, newQR]);
+    setActiveQRId(newId);
+  };
+
+  // Duplicate an existing QR item
+  const handleDuplicateQR = (id: string) => {
+    const source = qrItems.find((q) => q.id === id);
+    if (!source) return;
+
+    const newId = `qr-${Date.now()}`;
+    const duplicated: QRCodeItem = {
+      ...source,
+      id: newId,
+      label: `${source.label} (Kopia)`,
+      xMm: Math.max(5, source.xMm - 10),
+      yMm: Math.max(5, source.yMm - 10),
+    };
+
+    setQrItems((prev) => [...prev, duplicated]);
+    setActiveQRId(newId);
+  };
+
+  // Remove a QR item
+  const handleRemoveQR = (id: string) => {
+    if (qrItems.length <= 1) return;
+    const nextList = qrItems.filter((q) => q.id !== id);
+    setQrItems(nextList);
+    if (activeQRId === id) {
+      setActiveQRId(nextList[0].id);
+    }
+  };
+
+  // Update active QR item
+  const handleChangeActiveQRConfig = (updated: Partial<QRCodeItem>) => {
+    setQrItems((prev) =>
+      prev.map((item) => (item.id === activeQRId ? { ...item, ...updated } : item))
     );
-    return new Set(pages);
-  }, [batchScope, currentPage, documentInfo]);
+  };
+
+  // Quick Preset Alignment for active QR
+  const handleApplyPreset = (preset: AlignmentPreset) => {
+    const pageDim = currentPageDim;
+    const newPos = getPresetPosition(
+      preset,
+      pageDim.widthMm,
+      pageDim.heightMm,
+      activeQR.sizeMm,
+      activeQR.safetyMarginMm
+    );
+    handleChangeActiveQRConfig(newPos);
+  };
 
   // Load PDF file handler
   const handleFileUpload = useCallback(async (file: File) => {
@@ -165,37 +249,6 @@ export default function Home() {
     handleGenerateSample(20);
   }, [handleGenerateSample]);
 
-  // Update QR Config
-  const handleChangeQRConfig = (updated: Partial<QRConfig>) => {
-    setQrConfig((prev) => ({ ...prev, ...updated }));
-  };
-
-  // Update Page Shift Config
-  const handleChangePageShift = (updated: Partial<PageShiftConfig>) => {
-    setPageShift((prev) => ({ ...prev, ...updated }));
-  };
-
-  // Update Batch Scope
-  const handleChangeBatchScope = (updated: Partial<BatchScopeConfig>) => {
-    setBatchScope((prev) => ({ ...prev, ...updated }));
-  };
-
-  // Quick Preset Alignment
-  const handleApplyPreset = (preset: AlignmentPreset) => {
-    const pageDim = documentInfo?.pages[currentPage - 1] || {
-      widthMm: 148,
-      heightMm: 210,
-    };
-    const newPos = getPresetPosition(
-      preset,
-      pageDim.widthMm,
-      pageDim.heightMm,
-      qrConfig.sizeMm,
-      qrConfig.safetyMarginMm
-    );
-    handleChangeQRConfig(newPos);
-  };
-
   // Insert Dedicated QR Cover Page (+1 page shift)
   const handleInsertDedicatedPage = async () => {
     if (!documentInfo) return;
@@ -203,8 +256,8 @@ export default function Home() {
       const modifiedBytes = await insertDedicatedQRPage({
         originalBytes: documentInfo.data,
         insertAtPage: currentPage,
-        qrConfig,
-        title: 'Karta Identyfikacyjna i Kod QR',
+        qrConfig: activeQR,
+        title: 'Karta Identyfikacyjna i Kody QR',
         subtitle: `Dokument A5: ${documentInfo.name}`,
       });
 
@@ -218,14 +271,14 @@ export default function Home() {
     }
   };
 
-  // Start Batch Lossless Export
+  // Start Batch Lossless Export with ALL defined QR codes
   const handleExportClick = async () => {
-    if (!documentInfo || targetPages.size === 0) return;
+    if (!documentInfo || totalTargetedPages === 0) return;
 
     setIsModalOpen(true);
     setProgress({
       currentPage: 0,
-      totalPages: targetPages.size,
+      totalPages: documentInfo.pageCount,
       percent: 0,
       speedPagesPerSec: 0,
       etaSeconds: 0,
@@ -233,12 +286,10 @@ export default function Home() {
     });
 
     try {
-      const targetArray = Array.from(targetPages);
       const modifiedBytes = await applyQRCodesLossless({
         originalBytes: documentInfo.data,
-        targetPages: targetArray,
+        qrItems,
         totalPages: documentInfo.pageCount,
-        qrConfig,
         pageShift,
         onProgress: (p) => setProgress(p),
       });
@@ -283,7 +334,7 @@ export default function Home() {
         onGenerateSample={handleGenerateSample}
         onExportClick={handleExportClick}
         isProcessing={progress.status === 'processing'}
-        targetPagesCount={targetPages.size}
+        targetPagesCount={totalTargetedPages}
       />
 
       {/* 2. Main 3-Panel Workspace */}
@@ -294,42 +345,47 @@ export default function Home() {
           pdfDocProxy={pdfDocProxy}
           currentPage={currentPage}
           onSelectPage={(page) => setCurrentPage(page)}
-          targetPages={targetPages}
+          pageQRCountMap={pageQRCountMap}
         />
 
-        {/* Center: Canvas Workspace & Interactive QR Placement */}
+        {/* Center: Canvas Workspace & Multi-QR Overlay */}
         <WorkspaceCenter
           documentInfo={documentInfo}
           pdfDocProxy={pdfDocProxy}
           currentPage={currentPage}
           onPageChange={(page) => setCurrentPage(page)}
-          qrConfig={qrConfig}
-          onChangeQRConfig={handleChangeQRConfig}
-          targetPages={targetPages}
+          qrItems={qrItems}
+          activeQRId={activeQRId}
+          onSelectQRId={(id) => setActiveQRId(id)}
+          onChangeActiveQRConfig={handleChangeActiveQRConfig}
+          targetPagesPerQR={targetPagesPerQR}
           pageShift={pageShift}
-          qrPreviewUrl={qrPreviewUrl}
+          qrPreviews={qrPreviews}
           zoomScale={zoomScale}
           onZoomChange={setZoomScale}
         />
 
-        {/* Right: QR Code Configurator & Presets & Content Shift */}
+        {/* Right: Multi-QR Code Configurator & Presets */}
         <SidebarRight
-          qrConfig={qrConfig}
-          onChangeQRConfig={handleChangeQRConfig}
+          qrItems={qrItems}
+          activeQRId={activeQRId}
+          onSelectQRId={(id) => setActiveQRId(id)}
+          onAddQR={handleAddQR}
+          onRemoveQR={handleRemoveQR}
+          onDuplicateQR={handleDuplicateQR}
+          onChangeActiveQRConfig={handleChangeActiveQRConfig}
           pageShift={pageShift}
-          onChangePageShift={handleChangePageShift}
+          onChangePageShift={(upd) => setPageShift((prev) => ({ ...prev, ...upd }))}
           onInsertDedicatedPage={handleInsertDedicatedPage}
-          batchScope={batchScope}
-          onChangeBatchScope={handleChangeBatchScope}
           pageWidthMm={currentPageDim.widthMm}
           pageHeightMm={currentPageDim.heightMm}
           currentPage={currentPage}
           totalPages={documentInfo?.pageCount || 0}
-          targetPagesCount={targetPages.size}
+          targetPagesCount={totalTargetedPages}
           onApplyPreset={handleApplyPreset}
           onExportClick={handleExportClick}
           isProcessing={progress.status === 'processing'}
-          qrPreviewUrl={qrPreviewUrl}
+          qrPreviewUrl={qrPreviews[activeQRId]}
         />
       </div>
 
@@ -338,8 +394,8 @@ export default function Home() {
         documentInfo={documentInfo}
         currentPage={currentPage}
         zoomScale={zoomScale}
-        qrConfig={qrConfig}
-        targetPagesCount={targetPages.size}
+        qrConfig={activeQR}
+        targetPagesCount={totalTargetedPages}
       />
 
       {/* 4. Asynchronous Batch Progress Modal */}

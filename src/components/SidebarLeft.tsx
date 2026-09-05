@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Search, QrCode, ArrowRight, ArrowLeft, Layers } from 'lucide-react';
+import { QrCode, ArrowRight, ArrowLeft, Layers } from 'lucide-react';
 import { PdfDocumentInfo } from '@/types/pdf';
 import { renderPageThumbnail } from '@/lib/pdf-service';
 
@@ -10,7 +10,7 @@ interface SidebarLeftProps {
   pdfDocProxy: import('pdfjs-dist').PDFDocumentProxy | null;
   currentPage: number;
   onSelectPage: (page: number) => void;
-  targetPages: Set<number>;
+  pageQRCountMap: Map<number, number>;
 }
 
 const ITEM_HEIGHT = 175; // height of each thumbnail card in pixels
@@ -20,7 +20,7 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
   pdfDocProxy,
   currentPage,
   onSelectPage,
-  targetPages,
+  pageQRCountMap,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -29,6 +29,7 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
   const [renderedThumbnails, setRenderedThumbnails] = useState<Record<number, string>>({});
 
   const totalPages = documentInfo?.pageCount || 0;
+  const targetPageNumbers = Array.from(pageQRCountMap.keys()).sort((a, b) => a - b);
 
   // Track container height
   useEffect(() => {
@@ -89,14 +90,15 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
 
   // Jump to next/prev page with QR
   const jumpToQR = (direction: 'next' | 'prev') => {
-    const sorted = Array.from(targetPages).sort((a, b) => a - b);
-    if (sorted.length === 0) return;
+    if (targetPageNumbers.length === 0) return;
 
     let target: number | undefined;
     if (direction === 'next') {
-      target = sorted.find((p) => p > currentPage) || sorted[0];
+      target = targetPageNumbers.find((p) => p > currentPage) || targetPageNumbers[0];
     } else {
-      target = [...sorted].reverse().find((p) => p < currentPage) || sorted[sorted.length - 1];
+      target =
+        [...targetPageNumbers].reverse().find((p) => p < currentPage) ||
+        targetPageNumbers[targetPageNumbers.length - 1];
     }
 
     if (target) {
@@ -155,10 +157,10 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
         </form>
 
         {/* QR Navigation Shortcuts */}
-        {targetPages.size > 0 && (
+        {targetPageNumbers.length > 0 && (
           <div className="flex items-center justify-between text-[11px] text-zinc-400 pt-1 border-t border-zinc-800/60">
             <span className="flex items-center gap-1 text-emerald-400 font-medium">
-              <QrCode className="w-3 h-3" /> {targetPages.size} z kodem QR
+              <QrCode className="w-3 h-3" /> {targetPageNumbers.length} stron z QR
             </span>
             <div className="flex items-center gap-1">
               <button
@@ -197,7 +199,7 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
             {Array.from({ length: Math.max(0, endIndex - startIndex + 1) }, (_, i) => {
               const pageNum = startIndex + i + 1;
               const isActive = pageNum === currentPage;
-              const hasQR = targetPages.has(pageNum);
+              const qrCount = pageQRCountMap.get(pageNum) || 0;
               const thumbUrl = renderedThumbnails[pageNum];
 
               return (
@@ -211,7 +213,7 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                       : 'bg-zinc-900/60 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-900'
                   }`}
                 >
-                  {/* Card Header: Page Number & QR Badge */}
+                  {/* Card Header: Page Number & QR Count Badge */}
                   <div className="flex items-center justify-between mb-1.5">
                     <span
                       className={`text-[11px] font-mono font-medium ${
@@ -220,9 +222,9 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                     >
                       Strona {pageNum}
                     </span>
-                    {hasQR && (
+                    {qrCount > 0 && (
                       <span className="px-1.5 py-0.2 text-[9px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded flex items-center gap-0.5">
-                        <QrCode className="w-2.5 h-2.5" /> QR
+                        <QrCode className="w-2.5 h-2.5" /> QR {qrCount > 1 ? `(${qrCount})` : ''}
                       </span>
                     )}
                   </div>
@@ -244,9 +246,9 @@ export const SidebarLeft: React.FC<SidebarLeftProps> = ({
                     )}
 
                     {/* QR indicator on preview */}
-                    {hasQR && (
-                      <div className="absolute bottom-1 right-1 w-3.5 h-3.5 rounded-sm bg-emerald-500/80 flex items-center justify-center text-[7px] text-black font-bold shadow">
-                        QR
+                    {qrCount > 0 && (
+                      <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded-sm bg-emerald-500/90 text-[7px] text-black font-bold shadow flex items-center gap-0.5">
+                        QR{qrCount > 1 ? ` ${qrCount}` : ''}
                       </div>
                     )}
                   </div>

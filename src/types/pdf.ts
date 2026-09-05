@@ -43,6 +43,21 @@ export interface BatchScopeConfig {
   rangeString: string; // e.g. "1-50, 100-200"
 }
 
+export interface QRCodeItem {
+  id: string;
+  label: string;
+  content: string;
+  sizeMm: number;
+  xMm: number;
+  yMm: number;
+  errorCorrection: ErrorCorrectionLevel;
+  marginModules: number;
+  colorDark: string;
+  colorLight: string;
+  safetyMarginMm: number;
+  scope: BatchScopeConfig;
+}
+
 export interface ProcessingProgress {
   currentPage: number;
   totalPages: number;

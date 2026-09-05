@@ -10,8 +10,9 @@ import {
   Eye,
   Move,
   ArrowDownUp,
+  QrCode,
 } from 'lucide-react';
-import { PdfDocumentInfo, QRConfig, PageShiftConfig } from '@/types/pdf';
+import { PdfDocumentInfo, QRCodeItem, PageShiftConfig } from '@/types/pdf';
 import { renderActivePage, RenderTaskHandle } from '@/lib/pdf-service';
 import { InteractiveQRBox } from './InteractiveQRBox';
 import { mmToPt } from '@/lib/coordinates';
@@ -21,11 +22,13 @@ interface WorkspaceCenterProps {
   pdfDocProxy: import('pdfjs-dist').PDFDocumentProxy | null;
   currentPage: number;
   onPageChange: (page: number) => void;
-  qrConfig: QRConfig;
-  onChangeQRConfig: (updated: Partial<QRConfig>) => void;
-  targetPages: Set<number>;
+  qrItems: QRCodeItem[];
+  activeQRId: string;
+  onSelectQRId: (id: string) => void;
+  onChangeActiveQRConfig: (updated: Partial<QRCodeItem>) => void;
+  targetPagesPerQR: Map<string, Set<number>>;
   pageShift: PageShiftConfig;
-  qrPreviewUrl?: string;
+  qrPreviews: Record<string, string>;
   zoomScale: number;
   onZoomChange: (scale: number) => void;
 }
@@ -35,11 +38,13 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
   pdfDocProxy,
   currentPage,
   onPageChange,
-  qrConfig,
-  onChangeQRConfig,
-  targetPages,
+  qrItems,
+  activeQRId,
+  onSelectQRId,
+  onChangeActiveQRConfig,
+  targetPagesPerQR,
   pageShift,
-  qrPreviewUrl,
+  qrPreviews,
   zoomScale,
   onZoomChange,
 }) => {
@@ -136,8 +141,14 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
     setIsPanning(false);
   };
 
-  const isPageTargeted = targetPages.has(currentPage);
-  const isShiftActive = isPageTargeted && pageShift.enabled && pageShift.zone !== 'none';
+  // Find all QR items active on the current page
+  const activePageQRs = qrItems.filter((item) => {
+    const pages = targetPagesPerQR.get(item.id);
+    return pages?.has(currentPage);
+  });
+
+  const hasAnyQR = activePageQRs.length > 0;
+  const isShiftActive = hasAnyQR && pageShift.enabled && pageShift.zone !== 'none';
 
   // Calculate visual shift offsets
   const reservedZonePx = mmToPt(pageShift.offsetMm) * zoomScale;
@@ -241,9 +252,15 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
           <Eye className="w-4 h-4" />
         </button>
 
+        {activePageQRs.length > 0 && (
+          <span className="ml-1 px-2 py-0.5 text-[10px] font-medium bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 rounded flex items-center gap-1">
+            <QrCode className="w-3 h-3" /> {activePageQRs.length} {activePageQRs.length === 1 ? 'kod' : 'kody'} QR na tej stronie
+          </span>
+        )}
+
         {isShiftActive && (
           <span className="ml-1 px-2 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded flex items-center gap-1">
-            <ArrowDownUp className="w-3 h-3" /> Zrobiono miejsce na QR ({pageShift.offsetMm}mm)
+            <ArrowDownUp className="w-3 h-3" /> Zrobiono miejsce ({pageShift.offsetMm}mm)
           </span>
         )}
       </div>
@@ -308,23 +325,34 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
             </div>
           )}
 
-          {/* Interactive QR Overlay Layer */}
-          {isPageTargeted && (
+          {/* Interactive QR Overlay Layer for ALL QRs on this page */}
+          {activePageQRs.map((item) => (
             <InteractiveQRBox
-              qrConfig={qrConfig}
-              onChange={onChangeQRConfig}
+              key={item.id}
+              qrConfig={item}
+              isSelected={item.id === activeQRId}
+              onSelect={() => onSelectQRId(item.id)}
+              onChange={(updated) => {
+                if (item.id === activeQRId) {
+                  onChangeActiveQRConfig(updated);
+                } else {
+                  onSelectQRId(item.id);
+                  onChangeActiveQRConfig(updated);
+                }
+              }}
               pageWidthMm={currentPageDim.widthMm}
               pageHeightMm={currentPageDim.heightMm}
               displayScale={zoomScale}
-              qrPreviewUrl={qrPreviewUrl}
+              qrPreviewUrl={qrPreviews[item.id]}
               showSafetyMargin={showSafetyGuide && !isShiftActive}
+              label={item.label}
             />
-          )}
+          ))}
 
-          {/* Banner if page is NOT in target list */}
-          {!isPageTargeted && (
+          {/* Banner if page has NO QR assigned */}
+          {activePageQRs.length === 0 && (
             <div className="absolute top-2 left-2 px-2.5 py-1 bg-zinc-900/90 border border-zinc-700 rounded text-[10px] text-zinc-400 backdrop-blur pointer-events-none z-30">
-              Brak kodu QR na tej stronie (nieobjęta zakresem)
+              Brak kodu QR na tej stronie
             </div>
           )}
         </div>

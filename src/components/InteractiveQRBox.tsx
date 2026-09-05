@@ -12,6 +12,9 @@ interface InteractiveQRBoxProps {
   displayScale: number; // current zoom scale
   qrPreviewUrl?: string;
   showSafetyMargin?: boolean;
+  isSelected?: boolean;
+  onSelect?: () => void;
+  label?: string;
 }
 
 export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
@@ -22,6 +25,9 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
   displayScale,
   qrPreviewUrl,
   showSafetyMargin = true,
+  isSelected = true,
+  onSelect,
+  label,
 }) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -51,6 +57,10 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
   // Mouse Drag Handler
   const handleMouseDown = (e: React.MouseEvent) => {
     e.stopPropagation();
+    onSelect?.();
+
+    if (!isSelected) return;
+
     e.preventDefault();
     setIsDragging(true);
     dragStartRef.current = {
@@ -104,12 +114,11 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
         const newSizeMm = Math.round(
           clamp(
             resizeStartRef.current.startSizeMm + deltaMm,
-            12, // min 12mm
+            12,
             Math.min(pageWidthMm - qrConfig.xMm - qrConfig.safetyMarginMm, 80)
           )
         );
 
-        // Also ensure clamped position
         const clampedPos = clampQRPosition(
           qrConfig.xMm,
           qrConfig.yMm,
@@ -144,8 +153,8 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
 
   return (
     <>
-      {/* Visual Safety Margin Outline (Dotted Red/Gray) */}
-      {showSafetyMargin && (
+      {/* Visual Safety Margin Outline */}
+      {showSafetyMargin && isSelected && (
         <div
           className="absolute pointer-events-none border border-dashed border-red-500/30 z-10"
           style={{
@@ -172,11 +181,13 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
           width: `${sizePx}px`,
           height: `${sizePx}px`,
         }}
-        className={`absolute z-20 group cursor-move select-none rounded border-2 transition-shadow ${
-          isDragging || isResizing
-            ? 'border-blue-400 shadow-xl shadow-blue-500/30 ring-2 ring-blue-500/20'
-            : 'border-blue-500/80 hover:border-blue-400 hover:shadow-lg hover:shadow-blue-500/20'
-        } bg-white/90 p-1 flex items-center justify-center`}
+        className={`absolute z-20 group cursor-move select-none rounded transition-all ${
+          isSelected
+            ? isDragging || isResizing
+              ? 'border-2 border-blue-400 shadow-xl shadow-blue-500/40 ring-2 ring-blue-500/30'
+              : 'border-2 border-blue-500 shadow-md ring-1 ring-blue-400/40'
+            : 'border-2 border-dashed border-zinc-400/70 hover:border-blue-400/80 opacity-85 hover:opacity-100'
+        } bg-white/95 p-1 flex items-center justify-center`}
       >
         {/* QR Code Image Preview */}
         {qrPreviewUrl ? (
@@ -193,23 +204,37 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
           </div>
         )}
 
-        {/* Live Coordinate Tooltip Badge */}
+        {/* Live Coordinate & Label Tooltip */}
         <div
-          className={`absolute -top-7 left-0 px-2 py-0.5 rounded text-[10px] font-mono font-medium tracking-tight whitespace-nowrap bg-zinc-900 text-zinc-200 border border-zinc-700 shadow-md transition-opacity pointer-events-none ${
-            isDragging || isResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          className={`absolute -top-7 left-0 px-2 py-0.5 rounded text-[10px] font-mono font-medium tracking-tight whitespace-nowrap bg-zinc-900 text-zinc-200 border border-zinc-700 shadow-md transition-opacity pointer-events-none flex items-center gap-1.5 ${
+            isSelected || isDragging || isResizing ? 'opacity-100 z-30' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
-          X: {qrConfig.xMm}mm | Y: {qrConfig.yMm}mm | {qrConfig.sizeMm}mm
+          {label && <strong className="text-blue-400 font-sans">{label}:</strong>}
+          <span>X: {qrConfig.xMm}mm</span>
+          <span className="text-zinc-500">|</span>
+          <span>Y: {qrConfig.yMm}mm</span>
+          <span className="text-zinc-500">|</span>
+          <span>{qrConfig.sizeMm}mm</span>
         </div>
 
-        {/* Bottom-Right Resize Handle */}
-        <div
-          onMouseDown={handleResizeDown}
-          className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-blue-500 border-2 border-white rounded-sm cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
-          title="Zmień rozmiar (proporcja 1:1)"
-        />
+        {/* Bottom-Right Resize Handle (Only when selected) */}
+        {isSelected && (
+          <div
+            onMouseDown={handleResizeDown}
+            className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-blue-500 border-2 border-white rounded-sm cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
+            title="Zmień rozmiar (proporcja 1:1)"
+          />
+        )}
 
-        {/* Subtle center crosshair */}
+        {/* Label Badge on box */}
+        {label && (
+          <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 px-1.5 py-0.2 rounded bg-zinc-900/90 text-[9px] text-zinc-300 border border-zinc-700 pointer-events-none whitespace-nowrap">
+            {label}
+          </div>
+        )}
+
+        {/* Center crosshair */}
         <div className="absolute inset-0 pointer-events-none opacity-0 group-hover:opacity-20 flex items-center justify-center">
           <div className="w-2 h-0.5 bg-blue-600" />
           <div className="h-2 w-0.5 bg-blue-600 absolute" />
