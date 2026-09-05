@@ -51,6 +51,10 @@ const DEFAULT_PAGE_SHIFT: PageShiftConfig = {
   offsetMm: 32,
   scaleContent: 0.90,
   autoPositionQR: true,
+  scopeMode: 'all-qr',
+  rangeString: '',
+  excludeFirstPage: true,
+  excludePagesString: '',
 };
 
 export default function Home() {

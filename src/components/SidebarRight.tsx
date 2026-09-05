@@ -37,6 +37,7 @@ import {
   BatchScopeConfig,
   PageShiftConfig,
   ContentShiftZone,
+  ShiftScopeMode,
   UniquePageMode,
 } from '@/types/pdf';
 import { getPresetPosition } from '@/lib/coordinates';
@@ -888,6 +889,80 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
                       {z.label}
                     </button>
                   ))}
+                </div>
+              </div>
+
+              {/* Scope selection for page shift */}
+              <div className="pt-2 border-t border-zinc-800">
+                <label className="text-[10px] text-zinc-400 block mb-1">
+                  Zastosuj margines na stronach:
+                </label>
+                <div className="grid grid-cols-2 gap-1 mb-1.5">
+                  {[
+                    { id: 'all-qr', label: 'Wszystkie z QR' },
+                    { id: 'odd', label: 'Tylko nieparzyste' },
+                    { id: 'even', label: 'Tylko parzyste' },
+                    { id: 'current', label: `Tylko strona ${currentPage}` },
+                    { id: 'range', label: 'Wybrany zakres...' },
+                  ].map((s) => {
+                    const activeMode = pageShift.scopeMode || 'all-qr';
+                    const isSelected = activeMode === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => onChangePageShift({ scopeMode: s.id as ShiftScopeMode })}
+                        className={`py-1 px-1.5 text-[9.5px] font-medium rounded border transition text-center ${
+                          isSelected
+                            ? 'bg-amber-500 text-zinc-950 font-bold border-amber-400 shadow-sm'
+                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                        } ${s.id === 'range' ? 'col-span-2' : ''}`}
+                      >
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {(pageShift.scopeMode === 'range') && (
+                  <div className="mt-1">
+                    <input
+                      type="text"
+                      placeholder="np. 2-5, 8, 10-12"
+                      value={pageShift.rangeString || ''}
+                      onChange={(e) => onChangePageShift({ rangeString: e.target.value })}
+                      className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Page exclusions */}
+              <div className="pt-2 border-t border-zinc-800 space-y-1.5">
+                <label className="text-[10px] text-zinc-400 block font-medium">
+                  Wykluczenia stron (bez marginesu / przesunięcia):
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-[10px] text-zinc-200 bg-zinc-950/60 p-1.5 rounded border border-zinc-800 hover:border-zinc-700 transition">
+                  <input
+                    type="checkbox"
+                    checked={pageShift.excludeFirstPage ?? true}
+                    onChange={(e) => onChangePageShift({ excludeFirstPage: e.target.checked })}
+                    className="accent-amber-500 rounded"
+                  />
+                  <span>Wyklucz stronę 1 (tytułowa / okładka)</span>
+                </label>
+
+                <div>
+                  <label className="text-[9px] text-zinc-400 block mb-0.5">
+                    Inne wykluczone strony (np. 1, 2, 5):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="np. 1, 2, 4-6"
+                    value={pageShift.excludePagesString || ''}
+                    onChange={(e) => onChangePageShift({ excludePagesString: e.target.value })}
+                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
+                  />
                 </div>
               </div>
 

@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, StandardFonts, PDFString } from 'pdf-lib';
 import { QRConfig, QRCodeItem, ProcessingProgress, PageShiftConfig } from '@/types/pdf';
-import { mmToPt, canvasTopLeftToPdfBottomLeft, parsePageRange } from './coordinates';
+import { mmToPt, canvasTopLeftToPdfBottomLeft, parsePageRange, isPageShiftActive } from './coordinates';
 import {
   interpolateQRText,
   generateQRPngBytes,
@@ -221,8 +221,15 @@ export async function applyQRCodesLossless({
 
       const newPage = newDoc.addPage([origW, origH]);
       const pageQRs = itemTargets.filter(({ pageSet }) => pageSet.has(pageNum));
+      const shouldShiftThisPage = isPageShiftActive(
+        pageShift,
+        pageNum,
+        pageQRs.length > 0,
+        origPages.length,
+        1
+      );
 
-      if (pageQRs.length > 0) {
+      if (shouldShiftThisPage) {
         let drawX = (origW * (1 - scale)) / 2;
         let drawY = (origH * (1 - scale)) / 2;
 
@@ -313,7 +320,52 @@ export async function applyQRCodesLossless({
           }
         }
       } else {
+        // Page is NOT shifted (e.g. title page or parity not matching shift criteria)
         newPage.drawPage(embeddedPages[i]);
+
+        // Still draw any QR codes assigned to this page at their original position
+        for (const { item, isDynamic } of pageQRs) {
+          const qrWidthPt = mmToPt(item.sizeMm);
+          const qrHeightPt = mmToPt(item.sizeMm);
+          const qrDrawX = mmToPt(item.xMm);
+          const qrDrawY = origH - mmToPt(item.yMm) - qrHeightPt;
+
+          const pageContent = resolvePageContent(item, pageNum, totalPages);
+          const pageLabel = resolvePageLabel(item, pageNum, totalPages);
+
+          let img = embeddedImageMap.get(item.id);
+          if (isDynamic) {
+            const cacheKey = `${item.id}_${pageContent}`;
+            let cachedImg = dynamicImageCache.get(cacheKey);
+            if (!cachedImg) {
+              const dynBytes = await generateQRPngBytes(pageContent, item, 512);
+              cachedImg = await newDoc.embedPng(dynBytes);
+              if (dynamicImageCache.size < 500) {
+                dynamicImageCache.set(cacheKey, cachedImg);
+              }
+            }
+            img = cachedImg;
+          }
+
+          if (img) {
+            drawQRWithLinkAndLabel({
+              doc: newDoc,
+              page: newPage,
+              item,
+              qrDrawX,
+              qrDrawY,
+              qrWidthPt,
+              qrHeightPt,
+              image: img,
+              pageNum,
+              totalPages,
+              font,
+              fontBold,
+              resolvedContent: pageContent,
+              resolvedLabel: pageLabel,
+            });
+          }
+        }
       }
 
       if (i % CHUNK_SIZE === 0 || i === origPages.length - 1) {

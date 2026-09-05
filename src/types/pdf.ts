@@ -80,6 +80,7 @@ export interface ProcessingProgress {
 }
 
 export type ContentShiftZone = 'none' | 'bottom' | 'top' | 'left' | 'right';
+export type ShiftScopeMode = 'all-qr' | 'odd' | 'even' | 'current' | 'range';
 
 export interface PageShiftConfig {
   enabled: boolean;
@@ -87,5 +88,9 @@ export interface PageShiftConfig {
   offsetMm: number; // e.g. 30mm reserved for QR
   scaleContent: number; // e.g. 0.90
   autoPositionQR: boolean; // automatically places QR in the center of the reserved zone
+  scopeMode?: ShiftScopeMode; // 'all-qr' | 'odd' | 'even' | 'current' | 'range'
+  rangeString?: string; // e.g. "2-20"
+  excludeFirstPage?: boolean; // exclude cover/title page 1 from content shifting
+  excludePagesString?: string; // e.g. "1, 2"
 }
 

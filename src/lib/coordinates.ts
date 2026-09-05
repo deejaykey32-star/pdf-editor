@@ -1,4 +1,4 @@
-import { AlignmentPreset, BatchMode, BatchScopeConfig } from '@/types/pdf';
+import { AlignmentPreset, BatchMode, BatchScopeConfig, PageShiftConfig } from '@/types/pdf';
 
 export const MM_TO_PT_RATIO = 72 / 25.4;
 export const PT_TO_MM_RATIO = 25.4 / 72;
@@ -159,3 +159,65 @@ export function parsePageRange(
       return [fallbackPage];
   }
 }
+
+/**
+ * Checks if content shift (making room for QR) should be applied to a specific page.
+ */
+export function isPageShiftActive(
+  pageShift: PageShiftConfig | undefined,
+  pageNum: number,
+  hasQR: boolean,
+  totalPages: number,
+  currentPage: number = 1
+): boolean {
+  if (!pageShift || !pageShift.enabled || pageShift.zone === 'none') {
+    return false;
+  }
+  if (!hasQR) {
+    return false;
+  }
+
+  // 1. Check title page exclusion (page 1)
+  if (pageShift.excludeFirstPage && pageNum === 1) {
+    return false;
+  }
+
+  // 2. Check custom excluded pages string (e.g. "1, 2, 5")
+  if (pageShift.excludePagesString && pageShift.excludePagesString.trim()) {
+    const excludedPages = parsePageRange(
+      { mode: 'range', rangeString: pageShift.excludePagesString },
+      totalPages,
+      currentPage
+    );
+    if (excludedPages.includes(pageNum)) {
+      return false;
+    }
+  }
+
+  // 3. Check scope rule
+  const mode = pageShift.scopeMode || 'all-qr';
+  switch (mode) {
+    case 'all-qr':
+      return true;
+    case 'odd':
+      return pageNum % 2 !== 0;
+    case 'even':
+      return pageNum % 2 === 0;
+    case 'current':
+      return pageNum === currentPage;
+    case 'range': {
+      if (!pageShift.rangeString || !pageShift.rangeString.trim()) {
+        return true;
+      }
+      const targetPages = parsePageRange(
+        { mode: 'range', rangeString: pageShift.rangeString },
+        totalPages,
+        currentPage
+      );
+      return targetPages.includes(pageNum);
+    }
+    default:
+      return true;
+  }
+}
+
