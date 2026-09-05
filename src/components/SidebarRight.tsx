@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   QrCode,
   Sliders,
@@ -39,6 +39,7 @@ import {
   ContentShiftZone,
   ShiftScopeMode,
   UniquePageMode,
+  PageShiftsMap,
 } from '@/types/pdf';
 import { getPresetPosition } from '@/lib/coordinates';
 import { interpolateQRText } from '@/lib/qr-generator';
@@ -55,7 +56,10 @@ interface SidebarRightProps {
   onGenerateSeriesForAllPages: (templateUrl: string) => void;
   onApplyUrlListToPages: (urls: string[]) => void;
   pageShift: PageShiftConfig;
+  pageShifts?: Record<number, PageShiftConfig>;
   onChangePageShift: (updated: Partial<PageShiftConfig>) => void;
+  onApplyShiftToPages?: (targetMode: 'all' | 'odd' | 'even' | 'range', rangeStr?: string) => void;
+  onClearAllShifts?: () => void;
   onInsertDedicatedPage?: () => void;
   pageWidthMm: number;
   pageHeightMm: number;
@@ -82,7 +86,10 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
   onGenerateSeriesForAllPages,
   onApplyUrlListToPages,
   pageShift,
+  pageShifts,
   onChangePageShift,
+  onApplyShiftToPages,
+  onClearAllShifts,
   onInsertDedicatedPage,
   pageWidthMm,
   pageHeightMm,
@@ -114,6 +121,14 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
     setCopiedNotification(true);
     setTimeout(() => setCopiedNotification(false), 2500);
   };
+
+  const activeShiftsCount = useMemo(() => {
+    if (!pageShifts) return pageShift.enabled ? 1 : 0;
+    return Object.values(pageShifts).filter((ps) => ps && ps.enabled && ps.zone !== 'none').length;
+  }, [pageShifts, pageShift.enabled]);
+
+  const [showBatchRangeModal, setShowBatchRangeModal] = useState(false);
+  const [batchRangeInput, setBatchRangeInput] = useState('2-5');
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -846,11 +861,11 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
           </div>
         )}
 
-        {/* Section 4: Content Shifting & Margin Room (Always available at bottom) */}
+        {/* Section 4: Content Shifting & Margin Room (Per-Page Config) */}
         <div className="space-y-3 pt-3 border-t border-zinc-800">
           <div className="flex items-center justify-between text-[11px] font-medium text-zinc-300">
             <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
-              <ArrowDownUp className="w-3.5 h-3.5 text-amber-400" /> Zrób miejsce na kod QR (Shift)
+              <ArrowDownUp className="w-3.5 h-3.5 text-amber-400" /> Zrób miejsce na kod (Strona {currentPage})
             </span>
             <label className="relative inline-flex items-center cursor-pointer">
               <input
@@ -863,8 +878,15 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
             </label>
           </div>
 
-          {pageShift.enabled && (
+          {pageShift.enabled ? (
             <div className="space-y-3 p-2.5 bg-zinc-900/90 border border-amber-500/30 rounded-lg">
+              <div className="flex items-center justify-between text-[10px] text-amber-300/90 font-medium">
+                <span>Margines wyłącznie dla Strony {currentPage}</span>
+                <span className="text-[9px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-mono font-semibold">
+                  Str. {currentPage}
+                </span>
+              </div>
+
               <div>
                 <label className="text-[10px] text-zinc-400 block mb-1">
                   Strefa wolnego miejsca:
@@ -889,80 +911,6 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
                       {z.label}
                     </button>
                   ))}
-                </div>
-              </div>
-
-              {/* Scope selection for page shift */}
-              <div className="pt-2 border-t border-zinc-800">
-                <label className="text-[10px] text-zinc-400 block mb-1">
-                  Zastosuj margines na stronach:
-                </label>
-                <div className="grid grid-cols-2 gap-1 mb-1.5">
-                  {[
-                    { id: 'all-qr', label: 'Wszystkie z QR' },
-                    { id: 'odd', label: 'Tylko nieparzyste' },
-                    { id: 'even', label: 'Tylko parzyste' },
-                    { id: 'current', label: `Tylko strona ${currentPage}` },
-                    { id: 'range', label: 'Wybrany zakres...' },
-                  ].map((s) => {
-                    const activeMode = pageShift.scopeMode || 'all-qr';
-                    const isSelected = activeMode === s.id;
-                    return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() => onChangePageShift({ scopeMode: s.id as ShiftScopeMode })}
-                        className={`py-1 px-1.5 text-[9.5px] font-medium rounded border transition text-center ${
-                          isSelected
-                            ? 'bg-amber-500 text-zinc-950 font-bold border-amber-400 shadow-sm'
-                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
-                        } ${s.id === 'range' ? 'col-span-2' : ''}`}
-                      >
-                        {s.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {(pageShift.scopeMode === 'range') && (
-                  <div className="mt-1">
-                    <input
-                      type="text"
-                      placeholder="np. 2-5, 8, 10-12"
-                      value={pageShift.rangeString || ''}
-                      onChange={(e) => onChangePageShift({ rangeString: e.target.value })}
-                      className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Page exclusions */}
-              <div className="pt-2 border-t border-zinc-800 space-y-1.5">
-                <label className="text-[10px] text-zinc-400 block font-medium">
-                  Wykluczenia stron (bez marginesu / przesunięcia):
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer text-[10px] text-zinc-200 bg-zinc-950/60 p-1.5 rounded border border-zinc-800 hover:border-zinc-700 transition">
-                  <input
-                    type="checkbox"
-                    checked={pageShift.excludeFirstPage ?? true}
-                    onChange={(e) => onChangePageShift({ excludeFirstPage: e.target.checked })}
-                    className="accent-amber-500 rounded"
-                  />
-                  <span>Wyklucz stronę 1 (tytułowa / okładka)</span>
-                </label>
-
-                <div>
-                  <label className="text-[9px] text-zinc-400 block mb-0.5">
-                    Inne wykluczone strony (np. 1, 2, 5):
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="np. 1, 2, 4-6"
-                    value={pageShift.excludePagesString || ''}
-                    onChange={(e) => onChangePageShift({ excludePagesString: e.target.value })}
-                    className="w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[10px] text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-500 font-mono"
-                  />
                 </div>
               </div>
 
@@ -1015,6 +963,104 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
                 />
                 <span>Automatycznie centruj kod w strefie</span>
               </label>
+
+              {/* Szybkie kopiowanie ustawień marginesu tej strony do innych stron */}
+              {onApplyShiftToPages && (
+                <div className="pt-2 border-t border-zinc-800 space-y-1.5">
+                  <label className="text-[10px] text-zinc-400 block font-medium">
+                    Skopiuj ustawienia Strony {currentPage} do:
+                  </label>
+                  <div className="grid grid-cols-2 gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onApplyShiftToPages('all')}
+                      className="py-1 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[9.5px] rounded border border-zinc-700 transition"
+                      title="Zastosuj te same parametry do wszystkich stron"
+                    >
+                      Wszystkich stron
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onApplyShiftToPages('odd')}
+                      className="py-1 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[9.5px] rounded border border-zinc-700 transition"
+                      title="Zastosuj tylko do stron nieparzystych"
+                    >
+                      Tylko nieparzystych
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onApplyShiftToPages('even')}
+                      className="py-1 px-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[9.5px] rounded border border-zinc-700 transition"
+                      title="Zastosuj tylko do stron parzystych"
+                    >
+                      Tylko parzystych
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowBatchRangeModal(!showBatchRangeModal)}
+                      className={`py-1 px-1.5 text-[9.5px] rounded border transition ${
+                        showBatchRangeModal
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-zinc-700'
+                      }`}
+                      title="Wpisz własny zakres stron"
+                    >
+                      Zakresu stron...
+                    </button>
+                  </div>
+
+                  {showBatchRangeModal && (
+                    <div className="flex gap-1 pt-1">
+                      <input
+                        type="text"
+                        placeholder="np. 2-5, 8"
+                        value={batchRangeInput}
+                        onChange={(e) => setBatchRangeInput(e.target.value)}
+                        className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-0.5 text-[10px] text-zinc-200 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onApplyShiftToPages('range', batchRangeInput);
+                          setShowBatchRangeModal(false);
+                        }}
+                        className="py-0.5 px-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-[10px] font-bold rounded"
+                      >
+                        Zastosuj
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-2.5 bg-zinc-950/60 border border-zinc-800 rounded-lg text-[10px] text-zinc-400 flex items-center justify-between">
+              <span>Strona {currentPage}: treść bez zmian (oryginał 100%)</span>
+              <button
+                type="button"
+                onClick={() => onChangePageShift({ enabled: true })}
+                className="text-[9.5px] text-amber-400 hover:text-amber-300 font-semibold cursor-pointer"
+              >
+                + Włącz margines
+              </button>
+            </div>
+          )}
+
+          {/* Podsumowanie i reset wszystkich stron */}
+          {activeShiftsCount > 0 && (
+            <div className="flex items-center justify-between text-[9.5px] text-zinc-400 px-1">
+              <span>
+                Margines aktywny na: <strong className="text-amber-400 font-mono font-semibold">{activeShiftsCount}</strong> / {totalPages || 1} stron
+              </span>
+              {onClearAllShifts && (
+                <button
+                  type="button"
+                  onClick={onClearAllShifts}
+                  className="text-zinc-500 hover:text-red-400 transition cursor-pointer text-[9px] underline"
+                >
+                  Wyłącz na wszystkich
+                </button>
+              )}
             </div>
           )}
 

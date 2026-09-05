@@ -14,6 +14,7 @@ export interface ModifyPdfOptions {
   qrItems: QRCodeItem[];
   totalPages: number;
   pageShift?: PageShiftConfig;
+  pageShifts?: Record<number, PageShiftConfig>;
   onProgress?: (progress: ProcessingProgress) => void;
 }
 
@@ -48,10 +49,9 @@ function drawQRWithLinkAndLabel({
   totalPages: number;
   font: import('pdf-lib').PDFFont;
   fontBold: import('pdf-lib').PDFFont;
-  resolvedContent?: string;
-  resolvedLabel?: string;
+  resolvedContent: string;
+  resolvedLabel: string;
 }) {
-  // 1. Draw QR Image
   page.drawImage(image, {
     x: qrDrawX,
     y: qrDrawY,
@@ -59,58 +59,29 @@ function drawQRWithLinkAndLabel({
     height: qrHeightPt,
   });
 
-  const finalLabel = (resolvedLabel ?? resolvePageLabel(item, pageNum, totalPages)).trim();
-  const finalContent = (resolvedContent ?? resolvePageContent(item, pageNum, totalPages)).trim();
-
-  const labelHeight = 12;
-  const isLabelVisible = item.showLabel !== false && Boolean(finalLabel);
+  const isLabelVisible = Boolean(item.showLabel && resolvedLabel);
   const labelPos = item.labelPosition || 'bottom';
-  let labelY = qrDrawY - labelHeight - 2;
+  const labelFontSize = 8;
+  let labelY = qrDrawY - labelFontSize - 2;
 
-  if (labelPos === 'top') {
-    labelY = qrDrawY + qrHeightPt + 2;
-  }
-
-  // 2. Draw Identification Label
   if (isLabelVisible) {
-    // Subtle background card
-    page.drawRectangle({
-      x: qrDrawX,
+    const textWidth = fontBold.widthOfTextAtSize(resolvedLabel, labelFontSize);
+    const labelX = qrDrawX + (qrWidthPt - textWidth) / 2;
+    if (labelPos === 'top') {
+      labelY = qrDrawY + qrHeightPt + 2;
+    }
+
+    page.drawText(resolvedLabel, {
+      x: Math.max(0, labelX),
       y: labelY,
-      width: qrWidthPt,
-      height: labelHeight,
-      color: rgb(0.96, 0.97, 0.98),
-      borderColor: rgb(0.8, 0.84, 0.9),
-      borderWidth: 0.5,
-    });
-
-    // Fit text inside label
-    const fontSize = 7;
-    let labelText = finalLabel;
-    while (fontBold.widthOfTextAtSize(labelText, fontSize) > qrWidthPt - 6 && labelText.length > 3) {
-      labelText = labelText.slice(0, -1);
-    }
-    if (labelText !== finalLabel) {
-      labelText += '..';
-    }
-
-    const textWidth = fontBold.widthOfTextAtSize(labelText, fontSize);
-    const textX = qrDrawX + (qrWidthPt - textWidth) / 2;
-
-    page.drawText(labelText, {
-      x: textX,
-      y: labelY + 3,
-      size: fontSize,
+      size: labelFontSize,
       font: fontBold,
-      color: rgb(0.12, 0.18, 0.28),
+      color: rgb(0.1, 0.1, 0.1),
     });
   }
 
-  // 3. Add Active Clickable Link Annotation
-  if (item.enableLink !== false && finalContent) {
-    let targetUrl = finalContent;
-
-    // Ensure valid web URL scheme
+  if (item.enableLink && resolvedContent) {
+    let targetUrl = resolvedContent.trim();
     if (
       !/^[a-zA-Z0-9+-.]+:\/\//.test(targetUrl) &&
       !targetUrl.startsWith('mailto:') &&
@@ -119,7 +90,6 @@ function drawQRWithLinkAndLabel({
       targetUrl = 'https://' + targetUrl;
     }
 
-    // Annotation rect encompasses QR + Label
     let rectY0 = qrDrawY;
     let rectY1 = qrDrawY + qrHeightPt;
 
@@ -127,7 +97,7 @@ function drawQRWithLinkAndLabel({
       if (labelPos === 'bottom') {
         rectY0 = labelY;
       } else {
-        rectY1 = labelY + labelHeight;
+        rectY1 = labelY + labelFontSize + 2;
       }
     }
 
@@ -157,6 +127,7 @@ export async function applyQRCodesLossless({
   qrItems,
   totalPages,
   pageShift,
+  pageShifts,
   onProgress,
 }: ModifyPdfOptions): Promise<Uint8Array> {
   const startTime = performance.now();
@@ -169,7 +140,10 @@ export async function applyQRCodesLossless({
     ignoreEncryption: true,
   });
 
-  const isShiftEnabled = pageShift && pageShift.enabled && pageShift.zone !== 'none';
+  const hasAnyPageShift = Boolean(
+    (pageShifts && Object.values(pageShifts).some((ps) => ps && ps.enabled && ps.zone !== 'none')) ||
+    (pageShift && pageShift.enabled && pageShift.zone !== 'none')
+  );
 
   // Pre-calculate target pages for each QR item
   const itemTargets = qrItems.map((item) => {
@@ -196,7 +170,7 @@ export async function applyQRCodesLossless({
   const CHUNK_SIZE = 20;
 
   // Branch 1: Content Shifting Mode (rebuilding pages with Form XObject transformations)
-  if (isShiftEnabled) {
+  if (hasAnyPageShift) {
     const newDoc = await PDFDocument.create();
     const origPages = pdfDoc.getPages();
     const embeddedPages = await newDoc.embedPages(origPages);
@@ -210,9 +184,6 @@ export async function applyQRCodesLossless({
     }
     const dynamicImageCache = new Map<string, import('pdf-lib').PDFImage>();
 
-    const offsetPt = mmToPt(pageShift.offsetMm);
-    const scale = Math.max(0.7, Math.min(1.0, pageShift.scaleContent));
-
     for (let i = 0; i < origPages.length; i++) {
       const pageNum = i + 1;
       const origPage = origPages[i];
@@ -221,37 +192,42 @@ export async function applyQRCodesLossless({
 
       const newPage = newDoc.addPage([origW, origH]);
       const pageQRs = itemTargets.filter(({ pageSet }) => pageSet.has(pageNum));
-      const shouldShiftThisPage = isPageShiftActive(
+      
+      const activeShift = pageShifts?.[pageNum] || (pageShift && isPageShiftActive(
         pageShift,
         pageNum,
         pageQRs.length > 0,
         origPages.length,
         1
-      );
+      ) ? pageShift : undefined);
 
-      if (shouldShiftThisPage) {
+      const shouldShiftThisPage = Boolean(activeShift && activeShift.enabled && activeShift.zone !== 'none');
+
+      if (shouldShiftThisPage && activeShift) {
+        const offsetPt = mmToPt(activeShift.offsetMm);
+        const scale = Math.max(0.7, Math.min(1.0, activeShift.scaleContent));
         let drawX = (origW * (1 - scale)) / 2;
         let drawY = (origH * (1 - scale)) / 2;
 
-        if (pageShift.zone === 'bottom') {
+        if (activeShift.zone === 'bottom') {
           const availH = origH - offsetPt;
           const drawH = origH * scale;
           const drawW = origW * scale;
           drawX = (origW - drawW) / 2;
           drawY = offsetPt + (availH - drawH) / 2;
-        } else if (pageShift.zone === 'top') {
+        } else if (activeShift.zone === 'top') {
           const availH = origH - offsetPt;
           const drawH = origH * scale;
           const drawW = origW * scale;
           drawX = (origW - drawW) / 2;
           drawY = (availH - drawH) / 2;
-        } else if (pageShift.zone === 'left') {
+        } else if (activeShift.zone === 'left') {
           const availW = origW - offsetPt;
           const drawW = origW * scale;
           const drawH = origH * scale;
           drawX = offsetPt + (availW - drawW) / 2;
           drawY = (origH - drawH) / 2;
-        } else if (pageShift.zone === 'right') {
+        } else if (activeShift.zone === 'right') {
           const availW = origW - offsetPt;
           const drawW = origW * scale;
           const drawH = origH * scale;
@@ -266,20 +242,25 @@ export async function applyQRCodesLossless({
           yScale: scale,
         });
 
-        // Draw all assigned QR codes with clickable links and labels
         for (const { item, isDynamic } of pageQRs) {
           const qrWidthPt = mmToPt(item.sizeMm);
           const qrHeightPt = mmToPt(item.sizeMm);
           let qrDrawX = mmToPt(item.xMm);
           let qrDrawY = origH - mmToPt(item.yMm) - qrHeightPt;
 
-          if (pageShift.autoPositionQR && pageQRs.length === 1) {
-            if (pageShift.zone === 'bottom') {
+          if (activeShift.autoPositionQR && pageQRs.length === 1) {
+            if (activeShift.zone === 'bottom') {
               qrDrawX = (origW - qrWidthPt) / 2;
               qrDrawY = (offsetPt - qrHeightPt) / 2;
-            } else if (pageShift.zone === 'top') {
+            } else if (activeShift.zone === 'top') {
               qrDrawX = (origW - qrWidthPt) / 2;
               qrDrawY = origH - offsetPt + (offsetPt - qrHeightPt) / 2;
+            } else if (activeShift.zone === 'left') {
+              qrDrawX = (offsetPt - qrWidthPt) / 2;
+              qrDrawY = (origH - qrHeightPt) / 2;
+            } else if (activeShift.zone === 'right') {
+              qrDrawX = origW - offsetPt + (offsetPt - qrWidthPt) / 2;
+              qrDrawY = (origH - qrHeightPt) / 2;
             }
           }
 

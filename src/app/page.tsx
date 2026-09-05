@@ -7,6 +7,7 @@ import {
   ProcessingProgress,
   AlignmentPreset,
   PageShiftConfig,
+  PageShiftsMap,
 } from '@/types/pdf';
 import { Header } from '@/components/Header';
 import { SidebarLeft } from '@/components/SidebarLeft';
@@ -64,7 +65,7 @@ export default function Home() {
   const [zoomScale, setZoomScale] = useState<number>(1.15);
   const [qrItems, setQrItems] = useState<QRCodeItem[]>(INITIAL_QR_ITEMS);
   const [activeQRId, setActiveQRId] = useState<string>('qr-1');
-  const [pageShift, setPageShift] = useState<PageShiftConfig>(DEFAULT_PAGE_SHIFT);
+  const [pageShifts, setPageShifts] = useState<PageShiftsMap>({});
   const [qrPreviews, setQrPreviews] = useState<Record<string, string>>({});
   const [progress, setProgress] = useState<ProcessingProgress>({
     currentPage: 0,
@@ -334,6 +335,54 @@ export default function Home() {
     handleChangeActiveQRConfig(newPos);
   };
 
+  // Page Shift configuration for the currently displayed page
+  const currentPageShift = useMemo<PageShiftConfig>(() => {
+    return pageShifts[currentPage] || { ...DEFAULT_PAGE_SHIFT };
+  }, [pageShifts, currentPage]);
+
+  const handleUpdateCurrentPageShift = useCallback(
+    (updated: Partial<PageShiftConfig>) => {
+      setPageShifts((prev) => {
+        const current = prev[currentPage] || { ...DEFAULT_PAGE_SHIFT };
+        return {
+          ...prev,
+          [currentPage]: { ...current, ...updated },
+        };
+      });
+    },
+    [currentPage]
+  );
+
+  const handleApplyShiftToPages = useCallback(
+    (targetMode: 'all' | 'odd' | 'even' | 'range', rangeStr?: string) => {
+      if (!documentInfo) return;
+      const currentConfig = pageShifts[currentPage] || { ...DEFAULT_PAGE_SHIFT, enabled: true };
+      let targetPages: number[] = [];
+      if (targetMode === 'all') {
+        targetPages = Array.from({ length: documentInfo.pageCount }, (_, i) => i + 1);
+      } else if (targetMode === 'odd') {
+        targetPages = Array.from({ length: documentInfo.pageCount }, (_, i) => i + 1).filter((p) => p % 2 !== 0);
+      } else if (targetMode === 'even') {
+        targetPages = Array.from({ length: documentInfo.pageCount }, (_, i) => i + 1).filter((p) => p % 2 === 0);
+      } else if (targetMode === 'range' && rangeStr) {
+        targetPages = parsePageRange({ mode: 'range', rangeString: rangeStr }, documentInfo.pageCount, currentPage);
+      }
+
+      setPageShifts((prev) => {
+        const next = { ...prev };
+        for (const p of targetPages) {
+          next[p] = { ...currentConfig };
+        }
+        return next;
+      });
+    },
+    [documentInfo, currentPage, pageShifts]
+  );
+
+  const handleClearAllShifts = useCallback(() => {
+    setPageShifts({});
+  }, []);
+
   // Safe PDF File Upload handler: extracts dimensions & proxy in 1 pass, keeping data intact
   const handleFileUpload = useCallback(async (file: File) => {
     try {
@@ -418,7 +467,8 @@ export default function Home() {
         originalBytes: safeOriginalBytes,
         qrItems,
         totalPages: documentInfo.pageCount,
-        pageShift,
+        pageShifts,
+        pageShift: currentPageShift,
         onProgress: (p) => setProgress(p),
       });
 
@@ -487,7 +537,7 @@ export default function Home() {
           onSelectQRId={(id) => setActiveQRId(id)}
           onChangeActiveQRConfig={handleChangeActiveQRConfig}
           targetPagesPerQR={targetPagesPerQR}
-          pageShift={pageShift}
+          pageShift={currentPageShift}
           qrPreviews={qrPreviews}
           zoomScale={zoomScale}
           onZoomChange={setZoomScale}
@@ -505,8 +555,11 @@ export default function Home() {
           onApplyPositionToAll={handleApplyPositionToAll}
           onGenerateSeriesForAllPages={handleGenerateSeriesForAllPages}
           onApplyUrlListToPages={handleApplyUrlListToPages}
-          pageShift={pageShift}
-          onChangePageShift={(upd) => setPageShift((prev) => ({ ...prev, ...upd }))}
+          pageShift={currentPageShift}
+          pageShifts={pageShifts}
+          onChangePageShift={handleUpdateCurrentPageShift}
+          onApplyShiftToPages={handleApplyShiftToPages}
+          onClearAllShifts={handleClearAllShifts}
           onInsertDedicatedPage={handleInsertDedicatedPage}
           pageWidthMm={currentPageDim.widthMm}
           pageHeightMm={currentPageDim.heightMm}

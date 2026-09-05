@@ -15,7 +15,7 @@ import {
 import { PdfDocumentInfo, QRCodeItem, PageShiftConfig } from '@/types/pdf';
 import { renderActivePage, RenderTaskHandle } from '@/lib/pdf-service';
 import { InteractiveQRBox } from './InteractiveQRBox';
-import { mmToPt, isPageShiftActive } from '@/lib/coordinates';
+import { mmToPt } from '@/lib/coordinates';
 import { resolvePageContent, resolvePageLabel } from '@/lib/qr-generator';
 
 interface WorkspaceCenterProps {
@@ -148,13 +148,10 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
     return pages?.has(currentPage);
   });
 
-  const hasAnyQR = activePageQRs.length > 0;
-  const isShiftActive = isPageShiftActive(
-    pageShift,
-    currentPage,
-    hasAnyQR,
-    documentInfo?.pageCount || 1,
-    currentPage
+  const isShiftActive = Boolean(
+    pageShift &&
+    pageShift.enabled &&
+    pageShift.zone !== 'none'
   );
 
   // Calculate visual shift offsets

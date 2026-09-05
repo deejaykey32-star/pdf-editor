@@ -94,3 +94,5 @@ export interface PageShiftConfig {
   excludePagesString?: string; // e.g. "1, 2"
 }
 
+export type PageShiftsMap = Record<number, PageShiftConfig>;
+
