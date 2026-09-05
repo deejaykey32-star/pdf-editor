@@ -1,17 +1,17 @@
 'use client';
 
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   ZoomIn,
   ZoomOut,
   Maximize,
-  RotateCcw,
   ChevronLeft,
   ChevronRight,
   Eye,
   Move,
+  ArrowDownUp,
 } from 'lucide-react';
-import { PdfDocumentInfo, QRConfig } from '@/types/pdf';
+import { PdfDocumentInfo, QRConfig, PageShiftConfig } from '@/types/pdf';
 import { renderActivePage, RenderTaskHandle } from '@/lib/pdf-service';
 import { InteractiveQRBox } from './InteractiveQRBox';
 import { mmToPt } from '@/lib/coordinates';
@@ -24,6 +24,7 @@ interface WorkspaceCenterProps {
   qrConfig: QRConfig;
   onChangeQRConfig: (updated: Partial<QRConfig>) => void;
   targetPages: Set<number>;
+  pageShift: PageShiftConfig;
   qrPreviewUrl?: string;
   zoomScale: number;
   onZoomChange: (scale: number) => void;
@@ -37,6 +38,7 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
   qrConfig,
   onChangeQRConfig,
   targetPages,
+  pageShift,
   qrPreviewUrl,
   zoomScale,
   onZoomChange,
@@ -68,7 +70,6 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
   useEffect(() => {
     if (!pdfDocProxy || !canvasRef.current) return;
 
-    // Cancel previous render
     if (renderTaskRef.current) {
       renderTaskRef.current.cancel();
     }
@@ -95,21 +96,12 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
     setPanOffset({ x: 0, y: 0 });
   };
 
-  const handleFitWidth = () => {
-    if (!containerRef.current) return;
-    const containerW = containerRef.current.clientWidth - 120;
-    const pageW = currentPageDim.widthPt;
-    const newScale = Math.min(2.0, Math.max(0.3, Number((containerW / pageW).toFixed(2))));
-    onZoomChange(newScale);
-    setPanOffset({ x: 0, y: 0 });
-  };
-
   const handleResetZoom = () => {
     onZoomChange(1.0);
     setPanOffset({ x: 0, y: 0 });
   };
 
-  // Mouse wheel zoom / pan
+  // Mouse wheel zoom
   const handleWheel = (e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -145,6 +137,30 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
   };
 
   const isPageTargeted = targetPages.has(currentPage);
+  const isShiftActive = isPageTargeted && pageShift.enabled && pageShift.zone !== 'none';
+
+  // Calculate visual shift offsets
+  const reservedZonePx = mmToPt(pageShift.offsetMm) * zoomScale;
+  const pageWidthPx = mmToPt(currentPageDim.widthMm) * zoomScale;
+  const pageHeightPx = mmToPt(currentPageDim.heightMm) * zoomScale;
+
+  let canvasTransform = '';
+  if (isShiftActive) {
+    const scale = pageShift.scaleContent;
+    if (pageShift.zone === 'bottom') {
+      const shiftYPx = -reservedZonePx * 0.45;
+      canvasTransform = `translateY(${shiftYPx}px) scale(${scale})`;
+    } else if (pageShift.zone === 'top') {
+      const shiftYPx = reservedZonePx * 0.45;
+      canvasTransform = `translateY(${shiftYPx}px) scale(${scale})`;
+    } else if (pageShift.zone === 'left') {
+      const shiftXPx = reservedZonePx * 0.45;
+      canvasTransform = `translateX(${shiftXPx}px) scale(${scale})`;
+    } else if (pageShift.zone === 'right') {
+      const shiftXPx = -reservedZonePx * 0.45;
+      canvasTransform = `translateX(${shiftXPx}px) scale(${scale})`;
+    }
+  }
 
   return (
     <main
@@ -155,9 +171,8 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
       onMouseUp={handleContainerMouseUp}
       className="flex-1 h-full workspace-grid relative overflow-hidden flex flex-col items-center justify-center select-none"
     >
-      {/* Floating Toolbar: Zoom, Navigation, Guide toggle */}
+      {/* Floating Toolbar */}
       <div className="absolute top-4 z-20 glass-panel rounded-lg shadow-xl px-2 py-1.5 flex items-center gap-1.5 text-zinc-300">
-        {/* Page Nav */}
         <button
           onClick={() => onPageChange(Math.max(1, currentPage - 1))}
           disabled={currentPage <= 1}
@@ -182,7 +197,6 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
 
         <div className="w-[1px] h-4 bg-zinc-700 mx-1" />
 
-        {/* Zoom Controls */}
         <button
           onClick={() => handleZoom(-0.15)}
           className="p-1.5 hover:bg-zinc-800 rounded transition cursor-pointer"
@@ -226,21 +240,73 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
         >
           <Eye className="w-4 h-4" />
         </button>
+
+        {isShiftActive && (
+          <span className="ml-1 px-2 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded flex items-center gap-1">
+            <ArrowDownUp className="w-3 h-3" /> Zrobiono miejsce na QR ({pageShift.offsetMm}mm)
+          </span>
+        )}
       </div>
 
       {/* Main Canvas & Page Viewport */}
       {documentInfo ? (
         <div
-          className="relative transition-transform duration-75 flex items-center justify-center shadow-canvas rounded"
+          className="relative transition-transform duration-75 flex items-center justify-center shadow-canvas rounded bg-white overflow-hidden"
           style={{
             transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
+            width: `${pageWidthPx}px`,
+            height: `${pageHeightPx}px`,
           }}
         >
-          {/* Active Canvas Layer */}
+          {/* Active Canvas Layer with optional content shift transform */}
           <canvas
             ref={canvasRef}
-            className="rounded bg-white shadow-2xl block border border-zinc-700/50"
+            style={{
+              transform: canvasTransform,
+              transition: 'transform 0.2s ease',
+            }}
+            className="block"
           />
+
+          {/* Reserved Zone Visual Indicator */}
+          {isShiftActive && (
+            <div
+              className="absolute z-10 pointer-events-none bg-amber-500/10 border border-dashed border-amber-500/60 flex items-center justify-center"
+              style={
+                pageShift.zone === 'bottom'
+                  ? {
+                      bottom: 0,
+                      left: 0,
+                      width: `${pageWidthPx}px`,
+                      height: `${reservedZonePx}px`,
+                    }
+                  : pageShift.zone === 'top'
+                  ? {
+                      top: 0,
+                      left: 0,
+                      width: `${pageWidthPx}px`,
+                      height: `${reservedZonePx}px`,
+                    }
+                  : pageShift.zone === 'left'
+                  ? {
+                      top: 0,
+                      left: 0,
+                      width: `${reservedZonePx}px`,
+                      height: `${pageHeightPx}px`,
+                    }
+                  : {
+                      top: 0,
+                      right: 0,
+                      width: `${reservedZonePx}px`,
+                      height: `${pageHeightPx}px`,
+                    }
+              }
+            >
+              <span className="text-[10px] font-medium text-amber-300/80 bg-zinc-900/80 px-2 py-0.5 rounded border border-amber-500/40 font-mono shadow-sm">
+                Czysta strefa na kod QR ({pageShift.offsetMm} mm)
+              </span>
+            </div>
+          )}
 
           {/* Interactive QR Overlay Layer */}
           {isPageTargeted && (
@@ -251,13 +317,13 @@ export const WorkspaceCenter: React.FC<WorkspaceCenterProps> = ({
               pageHeightMm={currentPageDim.heightMm}
               displayScale={zoomScale}
               qrPreviewUrl={qrPreviewUrl}
-              showSafetyMargin={showSafetyGuide}
+              showSafetyMargin={showSafetyGuide && !isShiftActive}
             />
           )}
 
           {/* Banner if page is NOT in target list */}
           {!isPageTargeted && (
-            <div className="absolute top-2 left-2 px-2.5 py-1 bg-zinc-900/90 border border-zinc-700 rounded text-[10px] text-zinc-400 backdrop-blur pointer-events-none">
+            <div className="absolute top-2 left-2 px-2.5 py-1 bg-zinc-900/90 border border-zinc-700 rounded text-[10px] text-zinc-400 backdrop-blur pointer-events-none z-30">
               Brak kodu QR na tej stronie (nieobjęta zakresem)
             </div>
           )}

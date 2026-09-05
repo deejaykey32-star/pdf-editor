@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   Maximize2,
   Grid,
+  ArrowDownUp,
+  FilePlus,
 } from 'lucide-react';
 import {
   QRConfig,
@@ -18,12 +20,16 @@ import {
   ErrorCorrectionLevel,
   AlignmentPreset,
   BatchScopeConfig,
+  PageShiftConfig,
+  ContentShiftZone,
 } from '@/types/pdf';
-import { getPresetPosition } from '@/lib/coordinates';
 
 interface SidebarRightProps {
   qrConfig: QRConfig;
   onChangeQRConfig: (updated: Partial<QRConfig>) => void;
+  pageShift: PageShiftConfig;
+  onChangePageShift: (updated: Partial<PageShiftConfig>) => void;
+  onInsertDedicatedPage?: () => void;
   batchScope: BatchScopeConfig;
   onChangeBatchScope: (updated: Partial<BatchScopeConfig>) => void;
   pageWidthMm: number;
@@ -40,6 +46,9 @@ interface SidebarRightProps {
 export const SidebarRight: React.FC<SidebarRightProps> = ({
   qrConfig,
   onChangeQRConfig,
+  pageShift,
+  onChangePageShift,
+  onInsertDedicatedPage,
   batchScope,
   onChangeBatchScope,
   pageWidthMm,
@@ -235,6 +244,132 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Section 2b: Content Shifting & Margin Room (NEW!) */}
+        <div className="space-y-3 pt-2 border-t border-zinc-800">
+          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-300">
+            <span className="flex items-center gap-1.5 text-amber-400 font-semibold">
+              <ArrowDownUp className="w-3.5 h-3.5 text-amber-400" /> Zrób miejsce na kod QR
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pageShift.enabled}
+                onChange={(e) => onChangePageShift({ enabled: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-amber-500"></div>
+            </label>
+          </div>
+
+          <p className="text-[10px] text-zinc-400 leading-tight">
+            Automatycznie odsuwa i przeskalowuje istniejącą treść strony, gwarantując wolną, czystą
+            strefę bez zasłaniania tekstu i tabel.
+          </p>
+
+          {pageShift.enabled && (
+            <div className="space-y-3 p-2.5 bg-zinc-900/90 border border-amber-500/30 rounded-lg">
+              {/* Zone Selector */}
+              <div>
+                <label className="text-[10px] text-zinc-400 block mb-1">
+                  Strefa wolnego miejsca:
+                </label>
+                <div className="grid grid-cols-2 gap-1">
+                  {[
+                    { id: 'bottom', label: 'Dół (Stopka)' },
+                    { id: 'top', label: 'Góra (Nagłówek)' },
+                    { id: 'left', label: 'Lewy bok' },
+                    { id: 'right', label: 'Prawy bok' },
+                  ].map((z) => (
+                    <button
+                      key={z.id}
+                      type="button"
+                      onClick={() => onChangePageShift({ zone: z.id as ContentShiftZone })}
+                      className={`py-1 px-2 text-[10px] font-medium rounded border transition ${
+                        pageShift.zone === z.id
+                          ? 'bg-amber-500 text-black border-amber-400 font-bold shadow-sm'
+                          : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                      }`}
+                    >
+                      {z.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Offset slider */}
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-zinc-400 mb-1">
+                  <span>Wysokość strefy QR:</span>
+                  <span className="font-mono text-amber-300 font-semibold">
+                    {pageShift.offsetMm} mm ({(pageShift.offsetMm * 2.8346).toFixed(0)} pt)
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={15}
+                  max={55}
+                  step={1}
+                  value={pageShift.offsetMm}
+                  onChange={(e) =>
+                    onChangePageShift({ offsetMm: parseInt(e.target.value, 10) || 30 })
+                  }
+                  className="w-full accent-amber-500 h-1.5 bg-zinc-800 rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Scale Slider */}
+              <div>
+                <div className="flex items-center justify-between text-[10px] text-zinc-400 mb-1">
+                  <span>Skala treści dokumentu:</span>
+                  <span className="font-mono text-zinc-200 font-semibold">
+                    {Math.round(pageShift.scaleContent * 100)}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={75}
+                  max={100}
+                  step={1}
+                  value={Math.round(pageShift.scaleContent * 100)}
+                  onChange={(e) =>
+                    onChangePageShift({
+                      scaleContent: (parseInt(e.target.value, 10) || 90) / 100,
+                    })
+                  }
+                  className="w-full accent-amber-500 h-1.5 bg-zinc-800 rounded cursor-pointer"
+                />
+              </div>
+
+              {/* Auto position toggle */}
+              <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pageShift.autoPositionQR}
+                  onChange={(e) => onChangePageShift({ autoPositionQR: e.target.checked })}
+                  className="accent-amber-500"
+                />
+                <span className="text-[10px] text-zinc-300">
+                  Wyśrodkuj kod QR w czystym pasie
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Insert dedicated page option */}
+          {onInsertDedicatedPage && (
+            <button
+              type="button"
+              onClick={onInsertDedicatedPage}
+              disabled={totalPages === 0}
+              className="w-full py-1.5 px-2.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-200 text-[10px] font-medium rounded border border-zinc-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
+              title="Wstawia nową stronę A5 dedykowaną na kod QR i przesuwa dotychczasową treść o +1"
+            >
+              <FilePlus className="w-3.5 h-3.5 text-blue-400" />
+              <span>Wstaw dedykowaną stronę QR (przesuń o +1)</span>
+            </button>
+          )}
         </div>
 
         {/* Section 3: QR Parameters (ECC, Quiet Zone) */}

@@ -52,3 +52,14 @@ export interface ProcessingProgress {
   status: 'idle' | 'processing' | 'completed' | 'error';
   errorMessage?: string;
 }
+
+export type ContentShiftZone = 'none' | 'bottom' | 'top' | 'left' | 'right';
+
+export interface PageShiftConfig {
+  enabled: boolean;
+  zone: ContentShiftZone;
+  offsetMm: number; // e.g. 30mm reserved for QR
+  scaleContent: number; // e.g. 0.90
+  autoPositionQR: boolean; // automatically places QR in the center of the reserved zone
+}
+

@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import dynamic from 'next/dynamic';
 import {
   PdfDocumentInfo,
   QRConfig,
   BatchScopeConfig,
   ProcessingProgress,
   AlignmentPreset,
+  PageShiftConfig,
 } from '@/types/pdf';
 import { Header } from '@/components/Header';
 import { SidebarLeft } from '@/components/SidebarLeft';
@@ -21,9 +21,8 @@ import { generateQRDataUrl } from '@/lib/qr-generator';
 import {
   parsePageRange,
   getPresetPosition,
-  clampQRPosition,
 } from '@/lib/coordinates';
-import { applyQRCodesLossless } from '@/lib/pdf-manipulator';
+import { applyQRCodesLossless, insertDedicatedQRPage } from '@/lib/pdf-manipulator';
 
 const DEFAULT_QR_CONFIG: QRConfig = {
   content: 'https://example.com/verify?doc=A5&page={page}&total={total}',
@@ -37,12 +36,21 @@ const DEFAULT_QR_CONFIG: QRConfig = {
   safetyMarginMm: 5,
 };
 
+const DEFAULT_PAGE_SHIFT: PageShiftConfig = {
+  enabled: false,
+  zone: 'bottom',
+  offsetMm: 32, // 32mm reserved zone for QR banner
+  scaleContent: 0.90, // 90% content scaling
+  autoPositionQR: true,
+};
+
 export default function Home() {
   const [documentInfo, setDocumentInfo] = useState<PdfDocumentInfo | null>(null);
   const [pdfDocProxy, setPdfDocProxy] = useState<any | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoomScale, setZoomScale] = useState<number>(1.15);
   const [qrConfig, setQrConfig] = useState<QRConfig>(DEFAULT_QR_CONFIG);
+  const [pageShift, setPageShift] = useState<PageShiftConfig>(DEFAULT_PAGE_SHIFT);
   const [batchScope, setBatchScope] = useState<BatchScopeConfig>({
     mode: 'all',
     rangeString: '1-100',
@@ -59,6 +67,14 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [modifiedPdfBlobUrl, setModifiedPdfBlobUrl] = useState<string | null>(null);
 
+  const currentPageDim = documentInfo?.pages[currentPage - 1] || {
+    widthMm: 148,
+    heightMm: 210,
+    widthPt: 419.53,
+    heightPt: 595.28,
+    rotation: 0,
+  };
+
   // Generate live preview of the QR code
   useEffect(() => {
     let isCurrent = true;
@@ -72,6 +88,34 @@ export default function Home() {
       isCurrent = false;
     };
   }, [qrConfig.content, qrConfig.errorCorrection, qrConfig.marginModules, qrConfig.colorDark, qrConfig.colorLight]);
+
+  // Automatically place QR inside reserved zone if Page Shift and autoPositionQR are enabled
+  useEffect(() => {
+    if (!pageShift.enabled || !pageShift.autoPositionQR) return;
+
+    const pageW = currentPageDim.widthMm;
+    const pageH = currentPageDim.heightMm;
+    const qrSize = qrConfig.sizeMm;
+    const offset = pageShift.offsetMm;
+
+    if (pageShift.zone === 'bottom') {
+      const centerX = Number(((pageW - qrSize) / 2).toFixed(1));
+      const centerY = Number((pageH - offset + (offset - qrSize) / 2).toFixed(1));
+      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
+    } else if (pageShift.zone === 'top') {
+      const centerX = Number(((pageW - qrSize) / 2).toFixed(1));
+      const centerY = Number(((offset - qrSize) / 2).toFixed(1));
+      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
+    } else if (pageShift.zone === 'left') {
+      const centerX = Number(((offset - qrSize) / 2).toFixed(1));
+      const centerY = Number(((pageH - qrSize) / 2).toFixed(1));
+      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
+    } else if (pageShift.zone === 'right') {
+      const centerX = Number((pageW - offset + (offset - qrSize) / 2).toFixed(1));
+      const centerY = Number(((pageH - qrSize) / 2).toFixed(1));
+      setQrConfig((prev) => ({ ...prev, xMm: centerX, yMm: centerY }));
+    }
+  }, [pageShift.enabled, pageShift.zone, pageShift.offsetMm, pageShift.autoPositionQR, currentPageDim.widthMm, currentPageDim.heightMm, qrConfig.sizeMm]);
 
   // Compute set of targeted page numbers
   const targetPages = useMemo(() => {
@@ -126,6 +170,11 @@ export default function Home() {
     setQrConfig((prev) => ({ ...prev, ...updated }));
   };
 
+  // Update Page Shift Config
+  const handleChangePageShift = (updated: Partial<PageShiftConfig>) => {
+    setPageShift((prev) => ({ ...prev, ...updated }));
+  };
+
   // Update Batch Scope
   const handleChangeBatchScope = (updated: Partial<BatchScopeConfig>) => {
     setBatchScope((prev) => ({ ...prev, ...updated }));
@@ -145,6 +194,28 @@ export default function Home() {
       qrConfig.safetyMarginMm
     );
     handleChangeQRConfig(newPos);
+  };
+
+  // Insert Dedicated QR Cover Page (+1 page shift)
+  const handleInsertDedicatedPage = async () => {
+    if (!documentInfo) return;
+    try {
+      const modifiedBytes = await insertDedicatedQRPage({
+        originalBytes: documentInfo.data,
+        insertAtPage: currentPage,
+        qrConfig,
+        title: 'Karta Identyfikacyjna i Kod QR',
+        subtitle: `Dokument A5: ${documentInfo.name}`,
+      });
+
+      const file = new File([modifiedBytes.buffer as ArrayBuffer], documentInfo.name, {
+        type: 'application/pdf',
+      });
+      await handleFileUpload(file);
+    } catch (err) {
+      console.error('Błąd wstawiania strony dedykowanej:', err);
+      alert('Nie udało się wstawić nowej strony.');
+    }
   };
 
   // Start Batch Lossless Export
@@ -168,6 +239,7 @@ export default function Home() {
         targetPages: targetArray,
         totalPages: documentInfo.pageCount,
         qrConfig,
+        pageShift,
         onProgress: (p) => setProgress(p),
       });
 
@@ -202,11 +274,6 @@ export default function Home() {
     document.body.removeChild(a);
   };
 
-  const currentPageDim = documentInfo?.pages[currentPage - 1] || {
-    widthMm: 148,
-    heightMm: 210,
-  };
-
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-background">
       {/* 1. Top Navigation Bar */}
@@ -239,15 +306,19 @@ export default function Home() {
           qrConfig={qrConfig}
           onChangeQRConfig={handleChangeQRConfig}
           targetPages={targetPages}
+          pageShift={pageShift}
           qrPreviewUrl={qrPreviewUrl}
           zoomScale={zoomScale}
           onZoomChange={setZoomScale}
         />
 
-        {/* Right: QR Code Configurator & Presets */}
+        {/* Right: QR Code Configurator & Presets & Content Shift */}
         <SidebarRight
           qrConfig={qrConfig}
           onChangeQRConfig={handleChangeQRConfig}
+          pageShift={pageShift}
+          onChangePageShift={handleChangePageShift}
+          onInsertDedicatedPage={handleInsertDedicatedPage}
           batchScope={batchScope}
           onChangeBatchScope={handleChangeBatchScope}
           pageWidthMm={currentPageDim.widthMm}
