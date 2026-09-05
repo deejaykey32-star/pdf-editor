@@ -8,7 +8,7 @@ export type AlignmentPreset =
   | 'bottom-center'
   | 'center';
 
-export type BatchMode = 'current' | 'all' | 'range' | 'odd' | 'even';
+export type BatchMode = 'page' | 'all' | 'range' | 'odd' | 'even';
 
 export interface PageDimensions {
   widthPt: number;
@@ -40,6 +40,7 @@ export interface QRConfig {
 
 export interface BatchScopeConfig {
   mode: BatchMode;
+  specificPage?: number; // specific 1-indexed page number when mode === 'page'
   rangeString: string; // e.g. "1-50, 100-200"
 }
 

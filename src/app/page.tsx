@@ -14,20 +14,17 @@ import { WorkspaceCenter } from '@/components/WorkspaceCenter';
 import { SidebarRight } from '@/components/SidebarRight';
 import { StatusBar } from '@/components/StatusBar';
 import { ProgressModal } from '@/components/ProgressModal';
-import { parsePdfDocument, getPdfjs } from '@/lib/pdf-service';
+import { parsePdfDocument } from '@/lib/pdf-service';
 import { generateSyntheticA5Pdf } from '@/lib/sample-pdf';
-import { generateQRDataUrl, resolvePageContent } from '@/lib/qr-generator';
-import {
-  parsePageRange,
-  getPresetPosition,
-} from '@/lib/coordinates';
+import { generateQRDataUrl, resolvePageContent, interpolateQRText } from '@/lib/qr-generator';
+import { parsePageRange, getPresetPosition } from '@/lib/coordinates';
 import { applyQRCodesLossless, insertDedicatedQRPage } from '@/lib/pdf-manipulator';
 
 const INITIAL_QR_ITEMS: QRCodeItem[] = [
   {
     id: 'qr-1',
-    label: 'Główny Kod QR',
-    content: 'https://example.com/verify?doc=A5&page={page}&total={total}',
+    label: 'Kod Strona 1',
+    content: 'https://example.com/strona-1',
     sizeMm: 25,
     xMm: 118, // bottom-right for A5 (148 - 25 - 5)
     yMm: 180, // bottom-right for A5 (210 - 25 - 5)
@@ -37,13 +34,14 @@ const INITIAL_QR_ITEMS: QRCodeItem[] = [
     colorLight: '#ffffff',
     safetyMarginMm: 5,
     scope: {
-      mode: 'all',
-      rangeString: '1-100',
+      mode: 'page',
+      specificPage: 1,
+      rangeString: '',
     },
     enableLink: true,
     showLabel: true,
     labelPosition: 'bottom',
-    uniqueMode: 'template',
+    uniqueMode: 'single',
   },
 ];
 
@@ -85,6 +83,34 @@ export default function Home() {
 
   const activeQR = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
 
+  // Compute map of target pages for each QR item
+  const targetPagesPerQR = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    const totalPages = documentInfo?.pageCount || 100;
+
+    qrItems.forEach((item) => {
+      const pages = parsePageRange(item.scope, totalPages, currentPage);
+      map.set(item.id, new Set(pages));
+    });
+
+    return map;
+  }, [qrItems, currentPage, documentInfo?.pageCount]);
+
+  // When changing pages, automatically select the QR code that is on this page (if any)
+  useEffect(() => {
+    const pageQRs = qrItems.filter((item) => {
+      const pSet = targetPagesPerQR.get(item.id);
+      return pSet?.has(currentPage);
+    });
+
+    if (pageQRs.length > 0) {
+      const isAlreadyOnThisPage = pageQRs.some((q) => q.id === activeQRId);
+      if (!isAlreadyOnThisPage) {
+        setActiveQRId(pageQRs[0].id);
+      }
+    }
+  }, [currentPage, qrItems, targetPagesPerQR, activeQRId]);
+
   // Generate previews for each QR code matching active page
   useEffect(() => {
     let isCurrent = true;
@@ -105,24 +131,6 @@ export default function Home() {
       isCurrent = false;
     };
   }, [qrItems, currentPage, documentInfo?.pageCount]);
-
-  // Compute map of target pages for each QR item
-  const targetPagesPerQR = useMemo(() => {
-    const map = new Map<string, Set<number>>();
-    const totalPages = documentInfo?.pageCount || 0;
-
-    qrItems.forEach((item) => {
-      const pages = parsePageRange(
-        item.scope.mode,
-        item.scope.rangeString,
-        currentPage,
-        totalPages
-      );
-      map.set(item.id, new Set(pages));
-    });
-
-    return map;
-  }, [qrItems, currentPage, documentInfo]);
 
   // Compute map of page -> count of QR codes
   const pageQRCountMap = useMemo(() => {
@@ -145,29 +153,31 @@ export default function Home() {
   // Total distinct pages with at least one QR code
   const totalTargetedPages = pageQRCountMap.size;
 
-  // Add a new QR item
-  const handleAddQR = () => {
-    const newIdx = qrItems.length + 1;
+  // Add a new QR item strictly for a specific page (defaults to current page)
+  const handleAddQRForPage = (targetPage: number = currentPage) => {
     const newId = `qr-${Date.now()}`;
+    const base = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
     const newQR: QRCodeItem = {
       id: newId,
-      label: `Kod ${newIdx}`,
-      content: `https://example.com/item-${newIdx}?page={page}`,
-      sizeMm: 22,
-      xMm: 15,
-      yMm: 180,
-      errorCorrection: 'M',
-      marginModules: 1,
-      colorDark: '#000000',
-      colorLight: '#ffffff',
-      safetyMarginMm: 5,
+      label: `Kod Strona ${targetPage}`,
+      content: `https://example.com/strona-${targetPage}`,
+      sizeMm: base ? base.sizeMm : 25,
+      xMm: base ? base.xMm : 118,
+      yMm: base ? base.yMm : 180,
+      errorCorrection: base ? base.errorCorrection : 'M',
+      marginModules: base ? base.marginModules : 1,
+      colorDark: base ? base.colorDark : '#000000',
+      colorLight: base ? base.colorLight : '#ffffff',
+      safetyMarginMm: base ? base.safetyMarginMm : 5,
       scope: {
-        mode: 'current',
+        mode: 'page',
+        specificPage: targetPage,
         rangeString: '',
       },
       enableLink: true,
       showLabel: true,
       labelPosition: 'bottom',
+      uniqueMode: 'single',
     };
 
     setQrItems((prev) => [...prev, newQR]);
@@ -209,6 +219,104 @@ export default function Home() {
     );
   };
 
+  // Copy geometry (size, position) from source QR code to all other QR codes in document
+  const handleApplyPositionToAll = (sourceId: string) => {
+    const source = qrItems.find((q) => q.id === sourceId);
+    if (!source) return;
+
+    setQrItems((prev) =>
+      prev.map((item) =>
+        item.id === sourceId
+          ? item
+          : {
+              ...item,
+              xMm: source.xMm,
+              yMm: source.yMm,
+              sizeMm: source.sizeMm,
+              safetyMarginMm: source.safetyMarginMm,
+            }
+      )
+    );
+  };
+
+  // Generate series of unique QR codes for ALL document pages based on template
+  const handleGenerateSeriesForAllPages = (templateUrl: string = 'https://example.com/produkt?page={page}') => {
+    const totalPages = documentInfo?.pageCount || 20;
+    const base = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
+    const newItems: QRCodeItem[] = [];
+
+    for (let p = 1; p <= totalPages; p++) {
+      const pageUrl = interpolateQRText(templateUrl, p, totalPages);
+      newItems.push({
+        id: `qr-p${p}-${Date.now()}`,
+        label: `Strona ${p}`,
+        content: pageUrl,
+        sizeMm: base ? base.sizeMm : 25,
+        xMm: base ? base.xMm : 118,
+        yMm: base ? base.yMm : 180,
+        errorCorrection: base ? base.errorCorrection : 'M',
+        marginModules: base ? base.marginModules : 1,
+        colorDark: base ? base.colorDark : '#000000',
+        colorLight: base ? base.colorLight : '#ffffff',
+        safetyMarginMm: base ? base.safetyMarginMm : 5,
+        scope: {
+          mode: 'page',
+          specificPage: p,
+          rangeString: '',
+        },
+        enableLink: true,
+        showLabel: true,
+        labelPosition: base ? base.labelPosition : 'bottom',
+        uniqueMode: 'single',
+      });
+    }
+
+    setQrItems(newItems);
+    const currItem = newItems.find((q) => q.scope.specificPage === currentPage) || newItems[0];
+    if (currItem) {
+      setActiveQRId(currItem.id);
+    }
+  };
+
+  // Assign list of URLs (one per page) to all pages in document
+  const handleApplyUrlListToPages = (urls: string[]) => {
+    const totalPages = documentInfo?.pageCount || urls.length;
+    const base = qrItems.find((q) => q.id === activeQRId) || qrItems[0];
+    const newItems: QRCodeItem[] = [];
+
+    for (let p = 1; p <= totalPages; p++) {
+      const url = urls[p - 1]?.trim() || `https://example.com/strona-${p}`;
+      newItems.push({
+        id: `qr-p${p}-${Date.now()}`,
+        label: `Strona ${p}`,
+        content: url,
+        sizeMm: base ? base.sizeMm : 25,
+        xMm: base ? base.xMm : 118,
+        yMm: base ? base.yMm : 180,
+        errorCorrection: base ? base.errorCorrection : 'M',
+        marginModules: base ? base.marginModules : 1,
+        colorDark: base ? base.colorDark : '#000000',
+        colorLight: base ? base.colorLight : '#ffffff',
+        safetyMarginMm: base ? base.safetyMarginMm : 5,
+        scope: {
+          mode: 'page',
+          specificPage: p,
+          rangeString: '',
+        },
+        enableLink: true,
+        showLabel: true,
+        labelPosition: base ? base.labelPosition : 'bottom',
+        uniqueMode: 'single',
+      });
+    }
+
+    setQrItems(newItems);
+    const currItem = newItems.find((q) => q.scope.specificPage === currentPage) || newItems[0];
+    if (currItem) {
+      setActiveQRId(currItem.id);
+    }
+  };
+
   // Quick Preset Alignment for active QR
   const handleApplyPreset = (preset: AlignmentPreset) => {
     const pageDim = currentPageDim;
@@ -222,16 +330,13 @@ export default function Home() {
     handleChangeActiveQRConfig(newPos);
   };
 
-  // Load PDF file handler
+  // Safe PDF File Upload handler: extracts dimensions & proxy in 1 pass, keeping data intact
   const handleFileUpload = useCallback(async (file: File) => {
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const parsedInfo = await parsePdfDocument(file, arrayBuffer);
-      const pdfjs = await getPdfjs();
-      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) });
-      const proxy = await loadingTask.promise;
+      const { info, proxy } = await parsePdfDocument(file, arrayBuffer);
 
-      setDocumentInfo(parsedInfo);
+      setDocumentInfo(info);
       setPdfDocProxy(proxy);
       setCurrentPage(1);
     } catch (err) {
@@ -244,7 +349,8 @@ export default function Home() {
   const handleGenerateSample = useCallback(async (count: number) => {
     try {
       const pdfBytes = await generateSyntheticA5Pdf(count);
-      const file = new File([pdfBytes.buffer as ArrayBuffer], `Syntetyczny_Katalog_A5_${count}stron.pdf`, {
+      const copy = new Uint8Array(pdfBytes);
+      const file = new File([copy], `Syntetyczny_Katalog_A5_${count}stron.pdf`, {
         type: 'application/pdf',
       });
       await handleFileUpload(file);
@@ -260,10 +366,11 @@ export default function Home() {
 
   // Insert Dedicated QR Cover Page (+1 page shift)
   const handleInsertDedicatedPage = async () => {
-    if (!documentInfo) return;
+    if (!documentInfo || !documentInfo.data || documentInfo.data.byteLength === 0) return;
     try {
+      const safeBytes = new Uint8Array(documentInfo.data.slice(0));
       const modifiedBytes = await insertDedicatedQRPage({
-        originalBytes: documentInfo.data,
+        originalBytes: safeBytes,
         insertAtPage: currentPage,
         qrConfig: activeQR,
         title: 'Karta Identyfikacyjna i Kody QR',
@@ -280,9 +387,14 @@ export default function Home() {
     }
   };
 
-  // Start Batch Lossless Export with ALL defined QR codes
+  // Start Batch Lossless Export with safe non-detached byte copy
   const handleExportClick = async () => {
     if (!documentInfo || totalTargetedPages === 0) return;
+
+    if (!documentInfo.data || documentInfo.data.byteLength === 0) {
+      alert('Błąd odczytu danych pliku PDF. Spróbuj wgrać plik ponownie.');
+      return;
+    }
 
     setIsModalOpen(true);
     setProgress({
@@ -295,8 +407,11 @@ export default function Home() {
     });
 
     try {
+      // Create guaranteed intact copy of original bytes
+      const safeOriginalBytes = new Uint8Array(documentInfo.data.slice(0));
+
       const modifiedBytes = await applyQRCodesLossless({
-        originalBytes: documentInfo.data,
+        originalBytes: safeOriginalBytes,
         qrItems,
         totalPages: documentInfo.pageCount,
         pageShift,
@@ -374,15 +489,18 @@ export default function Home() {
           onZoomChange={setZoomScale}
         />
 
-        {/* Right: Multi-QR Code Configurator & Presets */}
+        {/* Right: Intuitive QR Code Configurator & Series Generator */}
         <SidebarRight
           qrItems={qrItems}
           activeQRId={activeQRId}
           onSelectQRId={(id) => setActiveQRId(id)}
-          onAddQR={handleAddQR}
+          onAddQRForPage={handleAddQRForPage}
           onRemoveQR={handleRemoveQR}
           onDuplicateQR={handleDuplicateQR}
           onChangeActiveQRConfig={handleChangeActiveQRConfig}
+          onApplyPositionToAll={handleApplyPositionToAll}
+          onGenerateSeriesForAllPages={handleGenerateSeriesForAllPages}
+          onApplyUrlListToPages={handleApplyUrlListToPages}
           pageShift={pageShift}
           onChangePageShift={(upd) => setPageShift((prev) => ({ ...prev, ...upd }))}
           onInsertDedicatedPage={handleInsertDedicatedPage}
@@ -390,9 +508,11 @@ export default function Home() {
           pageHeightMm={currentPageDim.heightMm}
           currentPage={currentPage}
           totalPages={documentInfo?.pageCount || 0}
+          targetPagesPerQR={targetPagesPerQR}
           targetPagesCount={totalTargetedPages}
           onApplyPreset={handleApplyPreset}
           onExportClick={handleExportClick}
+          onPageChange={(p) => setCurrentPage(p)}
           isProcessing={progress.status === 'processing'}
           qrPreviewUrl={qrPreviews[activeQRId]}
         />

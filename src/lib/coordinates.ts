@@ -1,4 +1,4 @@
-import { AlignmentPreset, BatchMode } from '@/types/pdf';
+import { AlignmentPreset, BatchMode, BatchScopeConfig } from '@/types/pdf';
 
 export const MM_TO_PT_RATIO = 72 / 25.4;
 export const PT_TO_MM_RATIO = 25.4 / 72;
@@ -87,19 +87,45 @@ export function getPresetPosition(
 }
 
 /**
- * Parses user page range input (e.g. "1-10, 15, 20-25") into an array of 1-indexed page numbers.
+ * Parses user page range or specific page into an array of 1-indexed page numbers.
  */
 export function parsePageRange(
-  mode: BatchMode,
-  rangeString: string,
-  currentPage: number,
-  totalPages: number
+  scope: BatchScopeConfig | BatchMode,
+  rangeStringOrTotal: string | number,
+  currentPageOrTotal?: number,
+  totalPagesParam?: number
 ): number[] {
+  let mode: BatchMode = 'page';
+  let specificPage: number | undefined;
+  let rangeString = '';
+  let totalPages = 1;
+  let fallbackPage = 1;
+
+  if (typeof scope === 'object' && scope !== null) {
+    mode = scope.mode;
+    specificPage = scope.specificPage;
+    rangeString = scope.rangeString || '';
+    totalPages = typeof rangeStringOrTotal === 'number' ? rangeStringOrTotal : 1;
+    fallbackPage = currentPageOrTotal || 1;
+  } else {
+    mode = scope;
+    rangeString = typeof rangeStringOrTotal === 'string' ? rangeStringOrTotal : '';
+    fallbackPage = currentPageOrTotal || 1;
+    totalPages = totalPagesParam || 1;
+  }
+
   if (totalPages <= 0) return [];
 
+  // Handle 'page' or legacy 'current'
+  if ((mode as string) === 'current' || mode === 'page') {
+    const target = specificPage || fallbackPage;
+    if (target >= 1 && target <= totalPages) {
+      return [target];
+    }
+    return [Math.max(1, Math.min(fallbackPage, totalPages))];
+  }
+
   switch (mode) {
-    case 'current':
-      return [currentPage];
     case 'all':
       return Array.from({ length: totalPages }, (_, i) => i + 1);
     case 'odd':
@@ -107,7 +133,7 @@ export function parsePageRange(
     case 'even':
       return Array.from({ length: totalPages }, (_, i) => i + 1).filter((p) => p % 2 === 0);
     case 'range': {
-      if (!rangeString.trim()) return [currentPage];
+      if (!rangeString.trim()) return [fallbackPage];
       const pages = new Set<number>();
       const segments = rangeString.split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -129,5 +155,7 @@ export function parsePageRange(
       }
       return Array.from(pages).sort((a, b) => a - b);
     }
+    default:
+      return [fallbackPage];
   }
 }

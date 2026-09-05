@@ -31,13 +31,21 @@ function getThumbnailCacheKey(fileName: string, pageNum: number): string {
   return `${fileName}_p${pageNum}`;
 }
 
+export interface ParsedPdfResult {
+  info: PdfDocumentInfo;
+  proxy: import('pdfjs-dist').PDFDocumentProxy;
+}
+
 /**
- * Loads a PDF document and extracts page dimensions
+ * Loads a PDF document and extracts page dimensions safely
  */
 export async function parsePdfDocument(
   file: File,
   arrayBuffer: ArrayBuffer
-): Promise<PdfDocumentInfo> {
+): Promise<ParsedPdfResult> {
+  // Always create a dedicated safe copy of the raw binary data
+  const safeOriginalData = new Uint8Array(arrayBuffer.slice(0));
+
   const pdfjs = await getPdfjs();
   const loadingTask = pdfjs.getDocument({
     data: new Uint8Array(arrayBuffer.slice(0)),
@@ -64,13 +72,15 @@ export async function parsePdfDocument(
     page.cleanup();
   }
 
-  return {
+  const info: PdfDocumentInfo = {
     name: file.name,
     pageCount,
     fileSizeBytes: file.size,
     pages,
-    data: new Uint8Array(arrayBuffer),
+    data: safeOriginalData,
   };
+
+  return { info, proxy: pdfDoc };
 }
 
 /**

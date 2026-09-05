@@ -174,7 +174,7 @@ export async function applyQRCodesLossless({
   // Pre-calculate target pages for each QR item
   const itemTargets = qrItems.map((item) => {
     const pageSet = new Set(
-      parsePageRange(item.scope.mode, item.scope.rangeString, 1, totalPages)
+      parsePageRange(item.scope, totalPages, 1)
     );
     const isDynamic = isItemDynamicPerPage(item);
     return {
