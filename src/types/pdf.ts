@@ -56,6 +56,9 @@ export interface QRCodeItem {
   colorLight: string;
   safetyMarginMm: number;
   scope: BatchScopeConfig;
+  enableLink: boolean; // active clickable hyperlink in the exported PDF
+  showLabel: boolean; // visual identification label rendered on the page
+  labelPosition: 'top' | 'bottom'; // position of the label relative to QR
 }
 
 export interface ProcessingProgress {

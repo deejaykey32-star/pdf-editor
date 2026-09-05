@@ -40,6 +40,9 @@ const INITIAL_QR_ITEMS: QRCodeItem[] = [
       mode: 'all',
       rangeString: '1-100',
     },
+    enableLink: true,
+    showLabel: true,
+    labelPosition: 'bottom',
   },
 ];
 
@@ -159,6 +162,9 @@ export default function Home() {
         mode: 'current',
         rangeString: '',
       },
+      enableLink: true,
+      showLabel: true,
+      labelPosition: 'bottom',
     };
 
     setQrItems((prev) => [...prev, newQR]);

@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { QRConfig } from '@/types/pdf';
+import { ExternalLink } from 'lucide-react';
+import { QRCodeItem, QRConfig } from '@/types/pdf';
 import { mmToPt, ptToMm, clampQRPosition, clamp } from '@/lib/coordinates';
 
 interface InteractiveQRBoxProps {
-  qrConfig: QRConfig;
-  onChange: (updated: Partial<QRConfig>) => void;
+  qrConfig: QRCodeItem | (QRConfig & { enableLink?: boolean; showLabel?: boolean; labelPosition?: 'top' | 'bottom' });
+  onChange: (updated: Partial<QRCodeItem>) => void;
   pageWidthMm: number;
   pageHeightMm: number;
   displayScale: number; // current zoom scale
@@ -151,6 +152,10 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
     };
   }, [isDragging, isResizing, qrConfig, pageWidthMm, pageHeightMm, displayScale, onChange]);
 
+  const showLabel = qrConfig.showLabel !== false && Boolean(label?.trim());
+  const labelPos = qrConfig.labelPosition || 'bottom';
+  const hasLink = qrConfig.enableLink !== false && Boolean(qrConfig.content?.trim());
+
   return (
     <>
       {/* Visual Safety Margin Outline */}
@@ -171,7 +176,7 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
         </div>
       )}
 
-      {/* Interactive QR Box */}
+      {/* Interactive QR Box with Link and Identification Label */}
       <div
         ref={boxRef}
         onMouseDown={handleMouseDown}
@@ -189,6 +194,27 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
             : 'border-2 border-dashed border-zinc-400/70 hover:border-blue-400/80 opacity-85 hover:opacity-100'
         } bg-white/95 p-1 flex items-center justify-center`}
       >
+        {/* Active Link Icon Badge */}
+        {hasLink && (
+          <div
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md border border-white z-30"
+            title={`Aktywne pole z przekierowaniem do: ${qrConfig.content}`}
+          >
+            <ExternalLink className="w-2.5 h-2.5" />
+          </div>
+        )}
+
+        {/* Identification Label (Rendered directly on canvas preview) */}
+        {showLabel && (
+          <div
+            className={`absolute left-0 w-full px-1 py-0.5 rounded bg-zinc-100 text-zinc-900 border border-zinc-300 text-[8px] font-bold text-center truncate shadow-sm pointer-events-none z-20 ${
+              labelPos === 'top' ? '-top-4' : '-bottom-4'
+            }`}
+          >
+            {label}
+          </div>
+        )}
+
         {/* QR Code Image Preview */}
         {qrPreviewUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -225,13 +251,6 @@ export const InteractiveQRBox: React.FC<InteractiveQRBoxProps> = ({
             className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 bg-blue-500 border-2 border-white rounded-sm cursor-nwse-resize shadow-md hover:scale-125 transition-transform"
             title="Zmień rozmiar (proporcja 1:1)"
           />
-        )}
-
-        {/* Label Badge on box */}
-        {label && (
-          <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 px-1.5 py-0.2 rounded bg-zinc-900/90 text-[9px] text-zinc-300 border border-zinc-700 pointer-events-none whitespace-nowrap">
-            {label}
-          </div>
         )}
 
         {/* Center crosshair */}

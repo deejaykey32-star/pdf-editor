@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts, PDFString } from 'pdf-lib';
 import { QRConfig, QRCodeItem, ProcessingProgress, PageShiftConfig } from '@/types/pdf';
 import { mmToPt, canvasTopLeftToPdfBottomLeft, parsePageRange } from './coordinates';
 import { interpolateQRText, generateQRPngBytes } from './qr-generator';
@@ -12,9 +12,132 @@ export interface ModifyPdfOptions {
 }
 
 /**
+ * Draws a QR code with an optional identification label and an active clickable PDF Link Annotation.
+ */
+function drawQRWithLinkAndLabel({
+  doc,
+  page,
+  item,
+  qrDrawX,
+  qrDrawY,
+  qrWidthPt,
+  qrHeightPt,
+  image,
+  pageNum,
+  totalPages,
+  font,
+  fontBold,
+}: {
+  doc: PDFDocument;
+  page: import('pdf-lib').PDFPage;
+  item: QRCodeItem;
+  qrDrawX: number;
+  qrDrawY: number;
+  qrWidthPt: number;
+  qrHeightPt: number;
+  image: import('pdf-lib').PDFImage;
+  pageNum: number;
+  totalPages: number;
+  font: import('pdf-lib').PDFFont;
+  fontBold: import('pdf-lib').PDFFont;
+}) {
+  // 1. Draw QR Image
+  page.drawImage(image, {
+    x: qrDrawX,
+    y: qrDrawY,
+    width: qrWidthPt,
+    height: qrHeightPt,
+  });
+
+  const labelHeight = 12;
+  const isLabelVisible = item.showLabel !== false && Boolean(item.label?.trim());
+  const labelPos = item.labelPosition || 'bottom';
+  let labelY = qrDrawY - labelHeight - 2;
+
+  if (labelPos === 'top') {
+    labelY = qrDrawY + qrHeightPt + 2;
+  }
+
+  // 2. Draw Identification Label
+  if (isLabelVisible) {
+    // Subtle background card
+    page.drawRectangle({
+      x: qrDrawX,
+      y: labelY,
+      width: qrWidthPt,
+      height: labelHeight,
+      color: rgb(0.96, 0.97, 0.98),
+      borderColor: rgb(0.8, 0.84, 0.9),
+      borderWidth: 0.5,
+    });
+
+    // Fit text inside label
+    const fontSize = 7;
+    let labelText = item.label.trim();
+    while (fontBold.widthOfTextAtSize(labelText, fontSize) > qrWidthPt - 6 && labelText.length > 3) {
+      labelText = labelText.slice(0, -1);
+    }
+    if (labelText !== item.label.trim()) {
+      labelText += '..';
+    }
+
+    const textWidth = fontBold.widthOfTextAtSize(labelText, fontSize);
+    const textX = qrDrawX + (qrWidthPt - textWidth) / 2;
+
+    page.drawText(labelText, {
+      x: textX,
+      y: labelY + 3,
+      size: fontSize,
+      font: fontBold,
+      color: rgb(0.12, 0.18, 0.28),
+    });
+  }
+
+  // 3. Add Active Clickable Link Annotation
+  if (item.enableLink !== false && item.content?.trim()) {
+    let targetUrl = interpolateQRText(item.content, pageNum, totalPages).trim();
+
+    // Ensure valid web URL scheme
+    if (
+      !/^[a-zA-Z0-9+-.]+:\/\//.test(targetUrl) &&
+      !targetUrl.startsWith('mailto:') &&
+      !targetUrl.startsWith('tel:')
+    ) {
+      targetUrl = 'https://' + targetUrl;
+    }
+
+    // Annotation rect encompasses QR + Label
+    let rectY0 = qrDrawY;
+    let rectY1 = qrDrawY + qrHeightPt;
+
+    if (isLabelVisible) {
+      if (labelPos === 'bottom') {
+        rectY0 = labelY;
+      } else {
+        rectY1 = labelY + labelHeight;
+      }
+    }
+
+    const linkAnnot = doc.context.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: [qrDrawX, rectY0, qrDrawX + qrWidthPt, rectY1],
+      Border: [0, 0, 0],
+      A: {
+        Type: 'Action',
+        S: 'URI',
+        URI: PDFString.of(targetUrl),
+      },
+    });
+
+    const linkRef = doc.context.register(linkAnnot);
+    page.node.addAnnot(linkRef);
+  }
+}
+
+/**
  * Losslessly injects multiple distinct QR codes across pages of a PDF document
- * with optional Smart Content Shifting (reserving clean banner/margin space)
- * without rasterizing or flattening the original content.
+ * with active clickable links, identification labels, and optional content shifting.
  */
 export async function applyQRCodesLossless({
   originalBytes,
@@ -29,7 +152,6 @@ export async function applyQRCodesLossless({
     return originalBytes;
   }
 
-  // Load existing PDF document into AST/object graph
   const pdfDoc = await PDFDocument.load(originalBytes, {
     ignoreEncryption: true,
   });
@@ -65,8 +187,9 @@ export async function applyQRCodesLossless({
     const newDoc = await PDFDocument.create();
     const origPages = pdfDoc.getPages();
     const embeddedPages = await newDoc.embedPages(origPages);
+    const font = await newDoc.embedFont(StandardFonts.Helvetica);
+    const fontBold = await newDoc.embedFont(StandardFonts.HelveticaBold);
 
-    // Pre-embed static images in newDoc
     const embeddedImageMap = new Map<string, import('pdf-lib').PDFImage>();
     for (const [id, bytes] of staticPngCache.entries()) {
       const img = await newDoc.embedPng(bytes);
@@ -83,15 +206,7 @@ export async function applyQRCodesLossless({
       const origH = origPage.getHeight();
 
       const newPage = newDoc.addPage([origW, origH]);
-
-      // Find all QR items targeting this page
-      const pageQRs = itemTargets.filter(({ item, pageSet }) => {
-        // If mode is 'current', check if pageNum matches
-        if (item.scope.mode === 'current') {
-          return pageSet.has(pageNum);
-        }
-        return pageSet.has(pageNum);
-      });
+      const pageQRs = itemTargets.filter(({ pageSet }) => pageSet.has(pageNum));
 
       if (pageQRs.length > 0) {
         let drawX = (origW * (1 - scale)) / 2;
@@ -130,7 +245,7 @@ export async function applyQRCodesLossless({
           yScale: scale,
         });
 
-        // Draw all assigned QR codes for this page
+        // Draw all assigned QR codes with clickable links and labels
         for (const { item, isDynamic } of pageQRs) {
           const qrWidthPt = mmToPt(item.sizeMm);
           const qrHeightPt = mmToPt(item.sizeMm);
@@ -155,11 +270,19 @@ export async function applyQRCodesLossless({
           }
 
           if (img) {
-            newPage.drawImage(img, {
-              x: qrDrawX,
-              y: qrDrawY,
-              width: qrWidthPt,
-              height: qrHeightPt,
+            drawQRWithLinkAndLabel({
+              doc: newDoc,
+              page: newPage,
+              item,
+              qrDrawX,
+              qrDrawY,
+              qrWidthPt,
+              qrHeightPt,
+              image: img,
+              pageNum,
+              totalPages,
+              font,
+              fontBold,
             });
           }
         }
@@ -187,6 +310,8 @@ export async function applyQRCodesLossless({
   }
 
   // Branch 2: Standard In-Place Multi-QR Overlay Injection
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const embeddedImageMap = new Map<string, import('pdf-lib').PDFImage>();
   for (const [id, bytes] of staticPngCache.entries()) {
     const img = await pdfDoc.embedPng(bytes);
@@ -200,7 +325,6 @@ export async function applyQRCodesLossless({
     const page = pdfDoc.getPage(i);
     const pageHeightPt = page.getHeight();
 
-    // Find all QR items targeting this page
     const pageQRs = itemTargets.filter(({ pageSet }) => pageSet.has(pageNum));
 
     for (const { item, isDynamic } of pageQRs) {
@@ -224,11 +348,19 @@ export async function applyQRCodesLossless({
       }
 
       if (imageToDraw) {
-        page.drawImage(imageToDraw, {
-          x: xPdf,
-          y: yPdf,
-          width: qrWidthPt,
-          height: qrHeightPt,
+        drawQRWithLinkAndLabel({
+          doc: pdfDoc,
+          page,
+          item,
+          qrDrawX: xPdf,
+          qrDrawY: yPdf,
+          qrWidthPt,
+          qrHeightPt,
+          image: imageToDraw,
+          pageNum,
+          totalPages,
+          font,
+          fontBold,
         });
       }
     }
@@ -328,7 +460,7 @@ export async function insertDedicatedQRPage({
     height: qrSizePt,
   });
 
-  page.drawText('Zeskanuj kod, aby przejść do zasobu cyfrowego', {
+  page.drawText('Zeskanuj kod lub kliknij pole, aby przejść do zasobu', {
     x: 35,
     y: qrY - 30,
     size: 9,
@@ -343,6 +475,30 @@ export async function insertDedicatedQRPage({
     font,
     color: rgb(0.5, 0.55, 0.6),
   });
+
+  // Active clickable Link Annotation for Cover Page QR
+  let targetUrl = qrConfig.content.trim();
+  if (
+    !/^[a-zA-Z0-9+-.]+:\/\//.test(targetUrl) &&
+    !targetUrl.startsWith('mailto:') &&
+    !targetUrl.startsWith('tel:')
+  ) {
+    targetUrl = 'https://' + targetUrl;
+  }
+
+  const linkAnnot = pdfDoc.context.obj({
+    Type: 'Annot',
+    Subtype: 'Link',
+    Rect: [qrX, qrY, qrX + qrSizePt, qrY + qrSizePt],
+    Border: [0, 0, 0],
+    A: {
+      Type: 'Action',
+      S: 'URI',
+      URI: PDFString.of(targetUrl),
+    },
+  });
+  const linkRef = pdfDoc.context.register(linkAnnot);
+  page.node.addAnnot(linkRef);
 
   page.drawText('Wszystkie kolejne strony zostały bezstratnie przesunięte o +1', {
     x: 35,

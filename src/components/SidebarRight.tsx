@@ -17,6 +17,7 @@ import {
   Trash2,
   Copy,
   Tag,
+  ExternalLink,
 } from 'lucide-react';
 import {
   QRCodeItem,
@@ -220,6 +221,72 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        {/* Section 1b: Active Link & Visual Label Settings */}
+        <div className="space-y-2.5 pt-2 border-t border-zinc-800">
+          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-300">
+            <span className="flex items-center gap-1.5 text-blue-400 font-semibold">
+              <ExternalLink className="w-3.5 h-3.5 text-blue-400" /> Aktywne pole z linkiem w PDF
+            </span>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={activeQR.enableLink !== false}
+                onChange={(e) => onChangeActiveQRConfig({ enableLink: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-8 h-4 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-blue-600"></div>
+            </label>
+          </div>
+          <p className="text-[10px] text-zinc-400 leading-tight">
+            Kliknięcie w obszar kodu QR w wygenerowanym pliku PDF otworzy przypisany adres URL.
+          </p>
+
+          {/* Identification Label Toggle & Options */}
+          <div className="p-2.5 bg-zinc-900/80 border border-zinc-800 rounded-lg space-y-2">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-[10px] text-zinc-200 font-medium flex items-center gap-1">
+                <Tag className="w-3 h-3 text-blue-400" /> Etykieta z nazwą w PDF
+              </span>
+              <input
+                type="checkbox"
+                checked={activeQR.showLabel !== false}
+                onChange={(e) => onChangeActiveQRConfig({ showLabel: e.target.checked })}
+                className="accent-blue-500"
+              />
+            </label>
+
+            {activeQR.showLabel !== false && (
+              <div className="flex items-center justify-between pt-1 border-t border-zinc-800/80 text-[10px] text-zinc-400">
+                <span>Pozycja etykiety:</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => onChangeActiveQRConfig({ labelPosition: 'bottom' })}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      (activeQR.labelPosition || 'bottom') === 'bottom'
+                        ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                        : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
+                    }`}
+                  >
+                    Dół
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onChangeActiveQRConfig({ labelPosition: 'top' })}
+                    className={`px-2 py-0.5 rounded border transition ${
+                      activeQR.labelPosition === 'top'
+                        ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                        : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
+                    }`}
+                  >
+                    Góra
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Section 2: Dimensions & Position */}
