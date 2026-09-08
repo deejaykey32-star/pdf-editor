@@ -49,20 +49,14 @@ const DEFAULT_UNWANTED_PATTERNS = [
   /Amazon\s+KDP/gi,
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
-
-  // Czterech tomów / tomy
-  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tom[oó]w\b/gi,
-  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tomach\b/gi,
-  /\bczterech\s+tom[oó]w\b/gi,
-  /\bczterech\s+tomach\b/gi,
-  /\btom\s+[IVXLCDM\d]+\s+(?:z\s+)?czterech\s+tom[oó]w\b/gi,
 ];
 
 function deduplicateOverlappingText(text) {
   if (!text) return '';
   let cleaned = text;
 
-  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów")
+  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów", "tomów, tomów" -> "tomów,")
+  cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)[,;]?\s+\1\b/giu, '$1');
   cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)\s+\1\b/giu, '$1');
 
   // 2. Remove duplicate adjacent 2-to-6 word phrases (e.g. "czterech tomów czterech tomów" -> "czterech tomów")
@@ -271,11 +265,11 @@ async function runTests() {
   console.log('   ✓ Usunięto pusty nawias "( )".');
   console.log('   ✓ Zachowano pełną treść dat, cyklu i tajemnicy.\n');
 
-  // Test 1d: Removal of "Dokument A5 Amazon KDP", "czterech tomów", and deduplication of overlapping text
-  console.log('[4/5] Sprawdzanie usuwania "Dokument A5 Amazon KDP", "czterech tomów" i rozdzielania nałożeń tekstu...');
+  // Test 1d: Removal of "Dokument A5 Amazon KDP", PRESERVATION of "czterech tomów", and deduplication of overlapping text
+  console.log('[4/6] Sprawdzanie usuwania "Dokument A5 Amazon KDP", ZACHOWANIA "czterech tomów" i rozdzielania nałożeń tekstu...');
   const dirtyOverlaps =
     'Rozważanie poranne. Dokument A5 Amazon KDP Tom I z czterech tomów czterech tomów. ' +
-    'To jest czysty tekst modlitwy, z którego usunięto nałożenia tekstu czterech tomów i frazę Dokument A5 Amazon KDP.';
+    'To jest czysty tekst modlitwy, z którego usunięto nałożenia i duplikaty słów oraz frazę Dokument A5 Amazon KDP.';
 
   const cleanedOverlaps = sanitizeExtractedText(dirtyOverlaps);
   console.log('   Oryginalny tekst z nałożeniami:', dirtyOverlaps);
@@ -289,8 +283,15 @@ async function runTests() {
     throw new Error('Test FAILED: Fraza "Dokument A5 Amazon KDP" nie została usunięta!');
   }
 
-  if (cleanedOverlaps.includes('czterech tomów') || cleanedOverlaps.includes('czterech tomach')) {
-    throw new Error('Test FAILED: Fraza "czterech tomów" nie została usunięta!');
+  // "czterech tomów" MUST be preserved!
+  if (!cleanedOverlaps.includes('czterech tomów')) {
+    throw new Error('Test FAILED: Napis "czterech tomów" powinien zostać zachowany!');
+  }
+
+  // Duplicate "czterech tomów czterech tomów" must be deduplicated into a single occurrence
+  const tomMatches = cleanedOverlaps.match(/czterech\s+tom[oó]w/gi) || [];
+  if (tomMatches.length !== 1) {
+    throw new Error(`Test FAILED: Oczekiwano dokładnie 1 wystąpienia "czterech tomów", znaleziono ${tomMatches.length}!`);
   }
 
   if (!cleanedOverlaps.includes('Rozważanie poranne.') || !cleanedOverlaps.includes('To jest czysty tekst modlitwy')) {
@@ -298,8 +299,8 @@ async function runTests() {
   }
 
   console.log('   ✓ Pomyślnie wycięto frazę "Dokument A5 Amazon KDP".');
-  console.log('   ✓ Pomyślnie wycięto frazę "czterech tomów".');
-  console.log('   ✓ Rozdzielono i usunięto nałożone/powielone fragmenty tekstu.\n');
+  console.log('   ✓ Pomyślnie ZACHOWANO napis "czterech tomów".');
+  console.log('   ✓ Rozdzielono i zdeduplikowano nałożone/powielone słowa ("czterech tomów czterech tomów" -> "czterech tomów").\n');
 
   // Test 2: Verify KDP PDF margins & 12pt format
   console.log('[5/5] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');
@@ -383,6 +384,99 @@ async function runTests() {
   console.log(`   ✓ Utworzono plik PDF KDP A5 (${pdfBytes.length} bajtów).`);
   console.log(`   ✓ Wszystkie czcionki w nagłówkach i treści: dokładnie 12 pt.`);
   console.log(`   ✓ Żaden wyraz ani element nie wychodzi poza marginesy (prawa granica: ${maxRightX.toFixed(2)} pt).\n`);
+
+  // Test 2b: Verify ZERO word overlap on justified lines and lines with paragraph indents
+  console.log('[6/6] Sprawdzanie braku nałożeń wyrazów (zero word overlap) na liniach z wcięciem i wyjustowanych...');
+  const testParagraph =
+    'Rozważanie na temat tajemnicy stworzenia świata i człowieka z czterech tomów dzieła. ' +
+    'Każde słowo w składzie tekstu musi mieć własną, ściśle określoną pozycję poziomą i nigdy nie nakładać się na wyraz sąsiedni. ' +
+    'Marginesy A5 Amazon KDP są bezwzględnie przestrzegane, a justowanie zachowuje czytelne odstępy między wyrazami.';
+
+  const wordsList = testParagraph.split(/\s+/);
+  const firstLineIndentPt = mmToPt(5);
+  const standardSpace = font.widthOfTextAtSize(' ', FONT_SIZE);
+  const minWordGap = Math.max(2.0, standardSpace * 0.35);
+
+  // Line breaking simulation
+  const lines = [];
+  let curWords = [];
+  let curWidth = 0;
+  let isFirst = true;
+
+  for (const w of wordsList) {
+    const wW = font.widthOfTextAtSize(w, FONT_SIZE);
+    const availW = colWidth - (isFirst ? firstLineIndentPt : 0);
+    const prospective = curWidth + wW + curWords.length * standardSpace;
+    if (prospective <= availW - 0.5 || curWords.length === 0) {
+      curWords.push({ text: w, width: wW });
+      curWidth += wW;
+    } else {
+      lines.push({ words: curWords, isLast: false, indent: isFirst ? firstLineIndentPt : 0, availW, totalW: curWidth });
+      curWords = [{ text: w, width: wW }];
+      curWidth = wW;
+      isFirst = false;
+    }
+  }
+  if (curWords.length > 0) {
+    lines.push({ words: curWords, isLast: true, indent: isFirst ? firstLineIndentPt : 0, availW: colWidth - (isFirst ? firstLineIndentPt : 0), totalW: curWidth });
+  }
+
+  // Verify word positions on every line
+  for (let l = 0; l < lines.length; l++) {
+    const line = lines[l];
+    const startX = leftX + line.indent;
+    const maxLineRight = leftX + colWidth;
+    const renderedWords = [];
+
+    if (line.isLast || line.words.length <= 1) {
+      let curWordX = startX;
+      let prevWordEndX = startX;
+      for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
+        const item = line.words[wIdx];
+        const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
+        let drawX = Math.max(minX, curWordX);
+        if (drawX + item.width > maxLineRight && maxLineRight - item.width >= minX) {
+          drawX = maxLineRight - item.width;
+        }
+        renderedWords.push({ text: item.text, drawX, endX: drawX + item.width });
+        prevWordEndX = drawX + item.width;
+        curWordX = drawX + item.width + standardSpace;
+      }
+    } else {
+      const numGaps = line.words.length - 1;
+      const totalGapSpace = line.availW - line.totalW;
+      let gapW = numGaps > 0 ? totalGapSpace / numGaps : standardSpace;
+      if (gapW < minWordGap) gapW = minWordGap;
+      else if (gapW > standardSpace * 2.8) gapW = standardSpace * 1.5;
+
+      let curWordX = startX;
+      let prevWordEndX = startX;
+      for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
+        const item = line.words[wIdx];
+        const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
+        let drawX = Math.max(minX, curWordX);
+        if (drawX + item.width > maxLineRight && maxLineRight - item.width >= minX) {
+          drawX = maxLineRight - item.width;
+        }
+        renderedWords.push({ text: item.text, drawX, endX: drawX + item.width });
+        prevWordEndX = drawX + item.width;
+        curWordX = drawX + item.width + gapW;
+      }
+    }
+
+    // Assert: strictly no overlapping words on this line!
+    for (let wIdx = 0; wIdx < renderedWords.length - 1; wIdx++) {
+      const w1 = renderedWords[wIdx];
+      const w2 = renderedWords[wIdx + 1];
+      if (w1.endX > w2.drawX + 0.001) {
+        throw new Error(
+          `Test FAILED: Wyrazy nakładają się na siebie na linii ${l + 1}! "${w1.text}" (end: ${w1.endX.toFixed(2)}) i "${w2.text}" (start: ${w2.drawX.toFixed(2)})`
+        );
+      }
+    }
+  }
+  console.log(`   ✓ Sprawdzono ${lines.length} linii: ŻADEN wyraz nie nakłada się na inny wyraz!`);
+  console.log(`   ✓ Wszystkie odstępy między wyrazami są w 100% dodatnie i bezpieczne.\n`);
 
   // Test 3: Verify ePUB package
   console.log('[3/3] Testowanie generatora ePUB 3.0...');

@@ -167,7 +167,8 @@ function breakParagraphIntoJustifiedLines(
     const prospectiveSpaces = currentWords.length;
     const prospectiveWidth = currentWordsWidth + wordWidth + prospectiveSpaces * spaceWidth;
 
-    if (prospectiveWidth <= availableWidth || currentWords.length === 0) {
+    // Keep 0.5pt buffer for safety against font metric rounding differences
+    if (prospectiveWidth <= availableWidth - 0.5 || currentWords.length === 0) {
       currentWords.push(word);
       currentWordsWidth += wordWidth;
     } else {
@@ -243,6 +244,14 @@ export async function generateKdpA5PrintPdf({
       page.drawText(text, options);
     } catch {
       page.drawText(sanitizeForStandardFont(text), options);
+    }
+  };
+
+  const getWordWidth = (font: PDFFont, word: string, size: number): number => {
+    try {
+      return font.widthOfTextAtSize(word, size);
+    } catch {
+      return font.widthOfTextAtSize(sanitizeForStandardFont(word), size);
     }
   };
 
@@ -453,7 +462,9 @@ export async function generateKdpA5PrintPdf({
 
     for (const tl of titleLines) {
       let curX = leftXFirst;
+      const spaceW = getWordWidth(boldFont, ' ', FONT_SIZE_12PT);
       for (const w of tl.words) {
+        const wW = getWordWidth(boldFont, w, FONT_SIZE_12PT);
         safeDrawText(currentPage!, w, {
           x: curX,
           y: cursorY,
@@ -461,7 +472,7 @@ export async function generateKdpA5PrintPdf({
           font: boldFont,
           color: rgb(0.1, 0.1, 0.15),
         });
-        curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+        curX += wW + spaceW;
       }
       cursorY -= LINE_HEIGHT_16PT;
     }
@@ -532,7 +543,9 @@ export async function generateKdpA5PrintPdf({
         startNewPage();
       }
       let curX = curLeftX;
+      const spaceW = getWordWidth(boldFont, ' ', FONT_SIZE_12PT);
       for (const w of chLine.words) {
+        const wW = getWordWidth(boldFont, w, FONT_SIZE_12PT);
         safeDrawText(currentPage!, w, {
           x: curX,
           y: cursorY,
@@ -540,7 +553,7 @@ export async function generateKdpA5PrintPdf({
           font: boldFont,
           color: rgb(0.1, 0.15, 0.25),
         });
-        curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+        curX += wW + spaceW;
       }
       cursorY -= LINE_HEIGHT_16PT;
     }
@@ -596,65 +609,80 @@ export async function generateKdpA5PrintPdf({
         const lineIsOdd = (currentPageNumber - 1) % 2 !== 0;
         const lineLeftMargin = bleedPt + (lineIsOdd ? gutterPt : outerPt);
         const startX = lineLeftMargin + line.firstLineIndent;
-        const maxLineRightX = lineLeftMargin + line.availableWidth;
+        // Right margin boundary of printable column (lineLeftMargin + columnWidthPt)
+        const maxLineRightX = lineLeftMargin + columnWidthPt;
+        const standardSpace = getWordWidth(pFont, ' ', FONT_SIZE_12PT);
+        const minWordGap = Math.max(2.0, standardSpace * 0.35);
 
         // Render line
         if (line.isLastLineOfParagraph || line.words.length <= 1) {
           // Left-aligned with standard space
           let currentWordX = startX;
-          const standardSpace = pFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+          let prevWordEndX = startX;
 
-          for (const word of line.words) {
-            let wWidth: number;
-            try {
-              wWidth = pFont.widthOfTextAtSize(word, FONT_SIZE_12PT);
-            } catch {
-              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), FONT_SIZE_12PT);
+          for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
+            const word = line.words[wIdx];
+            const wWidth = getWordWidth(pFont, word, FONT_SIZE_12PT);
+
+            // Word must NEVER start before previous word ends + min gap (guarantee zero overlap!)
+            const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
+            let drawX = Math.max(minX, currentWordX);
+
+            // If word would exceed right margin, compress gently if space exists, but NEVER move left of minX
+            if (drawX + wWidth > maxLineRightX && maxLineRightX - wWidth >= minX) {
+              drawX = maxLineRightX - wWidth;
             }
 
-            // Strictly clamp so nothing overflows
-            const clampedX = Math.min(currentWordX, maxLineRightX - wWidth);
             safeDrawText(currentPage!, word, {
-              x: Math.max(lineLeftMargin, clampedX),
+              x: drawX,
               y: cursorY,
               size: FONT_SIZE_12PT,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
-            currentWordX += wWidth + standardSpace;
+
+            prevWordEndX = drawX + wWidth;
+            currentWordX = drawX + wWidth + standardSpace;
           }
         } else {
           // Fully justified: distribute remaining space evenly
           const numGaps = line.words.length - 1;
           const totalGapSpace = line.availableWidth - line.totalWordsWidth;
-          const standardSpace = pFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
-          let justifiedGapWidth = totalGapSpace / numGaps;
+          let justifiedGapWidth = numGaps > 0 ? totalGapSpace / numGaps : standardSpace;
 
-          // Cap gap width if too few words to avoid excessive whitespace
-          if (justifiedGapWidth > standardSpace * 2.8) {
+          // Gap width bounds: avoid word collisions and prevent excessively huge whitespace
+          if (justifiedGapWidth < minWordGap) {
+            justifiedGapWidth = minWordGap;
+          } else if (justifiedGapWidth > standardSpace * 2.8) {
             justifiedGapWidth = standardSpace * 1.5;
           }
 
           let currentWordX = startX;
-          for (let w = 0; w < line.words.length; w++) {
-            const word = line.words[w];
-            let wWidth: number;
-            try {
-              wWidth = pFont.widthOfTextAtSize(word, FONT_SIZE_12PT);
-            } catch {
-              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), FONT_SIZE_12PT);
+          let prevWordEndX = startX;
+
+          for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
+            const word = line.words[wIdx];
+            const wWidth = getWordWidth(pFont, word, FONT_SIZE_12PT);
+
+            // Word must NEVER start before previous word ends + min gap (guarantee zero overlap!)
+            const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
+            let drawX = Math.max(minX, currentWordX);
+
+            // If last word or rounding pushes slightly past right margin, align to right margin if safe
+            if (drawX + wWidth > maxLineRightX && maxLineRightX - wWidth >= minX) {
+              drawX = maxLineRightX - wWidth;
             }
 
-            // Strictly clamp to prevent overflowing right margin
-            const clampedX = Math.min(currentWordX, maxLineRightX - wWidth);
             safeDrawText(currentPage!, word, {
-              x: Math.max(lineLeftMargin, clampedX),
+              x: drawX,
               y: cursorY,
               size: FONT_SIZE_12PT,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
-            currentWordX += wWidth + justifiedGapWidth;
+
+            prevWordEndX = drawX + wWidth;
+            currentWordX = drawX + wWidth + justifiedGapWidth;
           }
         }
 

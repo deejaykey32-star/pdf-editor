@@ -59,24 +59,19 @@ export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
   /Amazon\s+KDP/gi,
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
-
-  // Czterech tomów / tomy
-  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tom[oó]w\b/gi,
-  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tomach\b/gi,
-  /\bczterech\s+tom[oó]w\b/gi,
-  /\bczterech\s+tomach\b/gi,
-  /\btom\s+[IVXLCDM\d]+\s+(?:z\s+)?czterech\s+tom[oó]w\b/gi,
 ];
 
 /**
  * Separates and removes overlapping text artifacts, duplicated words/phrases,
- * and collisions caused by multi-layer or shadow text in the source PDF.
+ * and collisions caused by multi-layer or shadow text in the source PDF,
+ * while preserving legitimate phrases like "czterech tomów".
  */
 export function deduplicateOverlappingText(text: string): string {
   if (!text) return '';
   let cleaned = text;
 
-  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów")
+  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów", "tomów, tomów" -> "tomów,")
+  cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)[,;]?\s+\1\b/giu, '$1');
   cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)\s+\1\b/giu, '$1');
 
   // 2. Remove duplicate adjacent 2-to-6 word phrases (e.g. "czterech tomów czterech tomów" -> "czterech tomów")
@@ -322,14 +317,26 @@ export async function extractBookContentFromPdf(
 
       // Assemble line text, ensuring touching or overlapping word fragments are cleanly separated by a space
       let lineStr = '';
+      let lastItemX = -999;
+      let lastChunk = '';
+
       for (const it of itemsToFlush) {
         const chunk = it.str.trim();
         if (!chunk) continue;
+
+        // Deduplicate multi-pass rendering (exact same text rendered at near identical coordinate)
+        if (chunk === lastChunk && Math.abs(it.x - lastItemX) <= 3.0) {
+          continue;
+        }
+
         if (lineStr.length === 0) {
           lineStr = chunk;
         } else {
           lineStr += (lineStr.endsWith(' ') ? '' : ' ') + chunk;
         }
+
+        lastItemX = it.x;
+        lastChunk = chunk;
       }
 
       const rawText = lineStr.replace(/\s+/g, ' ');

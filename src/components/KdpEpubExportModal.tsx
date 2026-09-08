@@ -46,7 +46,6 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   // Exclusion filter text (lines to strip from extracted text)
   const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
     `Dokument A5 Amazon KDP
-czterech tomów
 Dokument A5
 WnR365 Calosc Ksiega A5   całość   06.09.2026
 Widoki na Raj — WnR365
