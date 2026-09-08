@@ -45,16 +45,22 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
 
   // Exclusion filter text (lines to strip from extracted text)
   const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
-    `eMBiK365 — widokinaraj.pl str. 2
+    `WnR365 Calosc Ksiega A5   całość   06.09.2026
+Widoki na Raj — WnR365
+Wstęp i Misja eMBiK365
+eMBiK365 — widokinaraj.pl str. 2
 eMBiK365 — widokinaraj.pl str. 1-797
 RHZ365 poprawiony 07.09.2026 z kodami QR
 Autor Publikacji
 Wprowadzenie
+Widoki na Raj
+WnR365
 Modlitwa (YouTube)
 Blog i modlitwa
 Różaniec Historii Zbawienia — RHZ365
 widokinaraj.pl
-RHZ365`
+RHZ365
+eMBiK365`
   );
 
   const excludedPatternsList = useMemo(() => {

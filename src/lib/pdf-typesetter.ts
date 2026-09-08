@@ -356,40 +356,42 @@ export async function generateKdpA5PrintPdf({
       let rawHeaderText = isOdd ? activeChapterTitle : (config.bookTitle || bookModel.title);
       let cleanHeaderText = sanitizeExtractedText(rawHeaderText, config.excludedPatterns);
 
-      const headerSize = 9;
-      const maxHeaderW = columnWidthPt * 0.72;
-      let textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText), headerSize);
+      if (cleanHeaderText && cleanHeaderText.trim().length > 0) {
+        const headerSize = 9;
+        const maxHeaderW = columnWidthPt * 0.72;
+        let textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText), headerSize);
 
-      // Truncate if header would exceed safe area
-      if (textW > maxHeaderW) {
-        while (cleanHeaderText.length > 3 && textW > maxHeaderW) {
-          cleanHeaderText = cleanHeaderText.slice(0, -1);
-          textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText + '...'), headerSize);
+        // Truncate if header would exceed safe area
+        if (textW > maxHeaderW) {
+          while (cleanHeaderText.length > 3 && textW > maxHeaderW) {
+            cleanHeaderText = cleanHeaderText.slice(0, -1);
+            textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText + '...'), headerSize);
+          }
+          cleanHeaderText += '...';
         }
-        cleanHeaderText += '...';
+
+        const headerX = isOdd
+          ? pageWidthPt - bleedPt - outerPt - textW
+          : bleedPt + outerPt;
+
+        safeDrawText(currentPage, cleanHeaderText, {
+          x: headerX,
+          y: headerY,
+          size: headerSize,
+          font: regularFont,
+          color: rgb(0.4, 0.4, 0.4),
+        });
+
+        // Subtle header divider line
+        const lineLeft = bleedPt + (isOdd ? gutterPt : outerPt);
+        const lineRight = lineLeft + columnWidthPt;
+        currentPage.drawLine({
+          start: { x: lineLeft, y: headerY - 5 },
+          end: { x: lineRight, y: headerY - 5 },
+          thickness: 0.5,
+          color: rgb(0.85, 0.85, 0.85),
+        });
       }
-
-      const headerX = isOdd
-        ? pageWidthPt - bleedPt - outerPt - textW
-        : bleedPt + outerPt;
-
-      safeDrawText(currentPage, cleanHeaderText, {
-        x: headerX,
-        y: headerY,
-        size: headerSize,
-        font: regularFont,
-        color: rgb(0.4, 0.4, 0.4),
-      });
-
-      // Subtle header divider line
-      const lineLeft = bleedPt + (isOdd ? gutterPt : outerPt);
-      const lineRight = lineLeft + columnWidthPt;
-      currentPage.drawLine({
-        start: { x: lineLeft, y: headerY - 5 },
-        end: { x: lineRight, y: headerY - 5 },
-        thickness: 0.5,
-        color: rgb(0.85, 0.85, 0.85),
-      });
     }
 
     // Running Footer (Page Numbers)
@@ -491,6 +493,11 @@ export async function generateKdpA5PrintPdf({
     // Normalize "Wstęp do..." into clean "Wstęp"
     if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
       cleanChapterTitle = 'Wstęp';
+    }
+
+    // If title was stripped by filters, fallback to default title if chapter has paragraphs
+    if (!cleanChapterTitle && chapter.paragraphs.length > 0) {
+      cleanChapterTitle = chIdx === 0 ? 'Wstęp' : `Rozdział ${chIdx + 1}`;
     }
 
     // Skip empty or noise chapters

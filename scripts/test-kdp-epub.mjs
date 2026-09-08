@@ -6,23 +6,43 @@ import fontkit from '@pdf-lib/fontkit';
 
 // Simulation of sanitizeExtractedText
 const DEFAULT_UNWANTED_PATTERNS = [
+  // WnR365 / Widoki na Raj patterns
+  /WnR\s*365\s+Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5(?:\s+ca[łl]o[sś][ćc])?(?:\s+\d{2}[.-]\d{2}[.-]\d{4})?/gi,
+  /WnR\s*365\s+Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5/gi,
+  /Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5/gi,
+  /Widoki\s+na\s+Raj\s*[-—–]?\s*WnR\s*365/gi,
+  /Widoki\s+na\s+Raj/gi,
+  /WnR\s*365/gi,
+  /ca[łl]o[sś][ćc]\s+\d{2}[.-]\d{2}[.-]\d{4}/gi,
+  /06[.-]09[.-]2026/gi,
+  /07[.-]09[.-]2026/gi,
+
+  // Wstęp i Misja eMBiK365
+  /Wst[eę]p\s+i\s+Misja(?:\s*[-—–]?\s*eMBiK\s*365)?/gi,
+  /Misja\s*[-—–]?\s*eMBiK\s*365/gi,
+
   // eMBiK365 and page numbers like "eMBiK365 — widokinaraj.pl str. 2", "str. 1-797", etc.
-  /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.\s*\d+(?:-\d+)?)?/gi,
-  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
+  /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.?\s*\d+(?:-\d+)?)?/gi,
+  /\bstr\.?\s*\d+(?:-\d+)?\b/gi,
+  /\bstrona\s*\d+(?:-\d+)?\b/gi,
+
   // RHZ365 poprawiony 07.09.2026 z kodami QR
   /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
   /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
   /z\s+kodami\s+QR\b/gi,
+
   // Modlitwa (YouTube) & Blog i modlitwa
   /Modlitwa\s*\(\s*YouTube\s*\)/gi,
   /Modlitwa\s+YouTube/gi,
   /Blog\s+i\s+modlitwa/gi,
+
   // Różaniec Historii Zbawienia — RHZ365
   /R[oó]żaniec\s+Historii\s+Zbawienia\s*[-—–]?\s*RHZ\s*365/gi,
   /R[oó]żaniec\s+Historii\s+Zbawienia/gi,
   /RHZ\s*365/gi,
   /widokinaraj(?:\.pl)?/gi,
   /eMBiK\s*365/gi,
+
   // Placeholders
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
@@ -69,8 +89,8 @@ async function runTests() {
   console.log('🧪 TEST: FILTRACJA FRAGMENTÓW, FORMAT 12 PT I OCHRONA MARGINESÓW');
   console.log('================================================================\n');
 
-  // Test 1: Sanitize unwanted strings
-  console.log('[1/3] Sprawdzanie usuwania wskazanych fragmentów tekstu...');
+  // Test 1: Sanitize unwanted strings (RHZ365)
+  console.log('[1/4] Sprawdzanie usuwania fragmentów tekstu z publikacji RHZ365...');
   const dirtySample =
     'eMBiK365 — widokinaraj.pl str. 2. RHZ365 poprawiony 07.09.2026 z kodami QR Autor Publikacji Wprowadzenie ' +
     'Modlitwa (YouTube) Blog i modlitwa Różaniec Historii Zbawienia — RHZ365 ' +
@@ -91,7 +111,7 @@ async function runTests() {
     cleanedSample.includes('Blog i modlitwa') ||
     cleanedSample.includes('Różaniec Historii Zbawienia')
   ) {
-    throw new Error('Test FAILED: Niepożądane fragmenty nie zostały w pełni wycięte!');
+    throw new Error('Test FAILED: Niepożądane fragmenty RHZ365 nie zostały w pełni wycięte!');
   }
 
   if (!cleanedSample.includes('Wstęp')) {
@@ -102,8 +122,38 @@ async function runTests() {
     throw new Error('Test FAILED: Treść wstępu została naruszona!');
   }
 
-  console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy i stopki.');
+  console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy i stopki RHZ365.');
   console.log('   ✓ Pomyślnie zachowano nagłówek "Wstęp" oraz nienaruszoną treść czytania.\n');
+
+  // Test 1b: Sanitize unwanted strings (WnR365 - Widoki na Raj)
+  console.log('[2/4] Sprawdzanie usuwania wskazanych fragmentów tekstu z WnR365...');
+  const dirtyWnR =
+    'WnR365 Calosc Ksiega A5   całość   06.09.2026 Autor Publikacji Wprowadzenie ' +
+    'Widoki na Raj — WnR365 Wstęp i Misja eMBiK365 eMBiK365 — widokinaraj.pl str. 2 ' +
+    'Widoki na Raj — WnR365. To jest autentyczny tekst medytacji bez numeracji stron i stopek.';
+
+  const cleanedWnR = sanitizeExtractedText(dirtyWnR);
+  console.log('   Oryginalny tekst WnR:', dirtyWnR);
+  console.log('   Oczyszczony tekst WnR:', cleanedWnR);
+
+  if (
+    cleanedWnR.includes('WnR365') ||
+    cleanedWnR.includes('Calosc Ksiega A5') ||
+    cleanedWnR.includes('06.09.2026') ||
+    cleanedWnR.includes('Autor Publikacji') ||
+    cleanedWnR.includes('Wprowadzenie') ||
+    cleanedWnR.includes('Widoki na Raj') ||
+    cleanedWnR.includes('Wstęp i Misja eMBiK365') ||
+    cleanedWnR.includes('widokinaraj.pl') ||
+    cleanedWnR.includes('str. 2')
+  ) {
+    throw new Error('Test FAILED: Niepożądane fragmenty WnR365 nie zostały w pełni wycięte!');
+  }
+
+  if (!cleanedWnR.includes('To jest autentyczny tekst medytacji bez numeracji stron i stopek.')) {
+    throw new Error('Test FAILED: Treść właściwa WnR365 została naruszona!');
+  }
+  console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy, nagłówki i numerację stron z WnR365.\n');
 
   // Test 2: Verify KDP PDF margins & 12pt format
   console.log('[2/3] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');

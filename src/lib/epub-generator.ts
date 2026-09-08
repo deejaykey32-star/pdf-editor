@@ -242,6 +242,9 @@ nav#toc a {
     if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
       cleanChapterTitle = 'Wstęp';
     }
+    if (!cleanChapterTitle && chapter.paragraphs.length > 0) {
+      cleanChapterTitle = idx === 0 ? 'Wstęp' : `Rozdział ${idx + 1}`;
+    }
     if (!cleanChapterTitle) continue;
 
     const filename = `chapter_${String(chapterFiles.length + 1).padStart(3, '0')}.xhtml`;

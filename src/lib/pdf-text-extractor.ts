@@ -16,23 +16,43 @@ interface RawTextItem {
  * (e.g. eMBiK365, widokinaraj.pl, RHZ365, str. 2, str. 1-797, Modlitwa (YouTube), etc.)
  */
 export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
+  // WnR365 / Widoki na Raj patterns
+  /WnR\s*365\s+Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5(?:\s+ca[łl]o[sś][ćc])?(?:\s+\d{2}[.-]\d{2}[.-]\d{4})?/gi,
+  /WnR\s*365\s+Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5/gi,
+  /Ca[łl]o[sś][ćc]\s+Ksi[eę]ga\s+A5/gi,
+  /Widoki\s+na\s+Raj\s*[-—–]?\s*WnR\s*365/gi,
+  /Widoki\s+na\s+Raj/gi,
+  /WnR\s*365/gi,
+  /ca[łl]o[sś][ćc]\s+\d{2}[.-]\d{2}[.-]\d{4}/gi,
+  /06[.-]09[.-]2026/gi,
+  /07[.-]09[.-]2026/gi,
+
+  // Wstęp i Misja eMBiK365
+  /Wst[eę]p\s+i\s+Misja(?:\s*[-—–]?\s*eMBiK\s*365)?/gi,
+  /Misja\s*[-—–]?\s*eMBiK\s*365/gi,
+
   // eMBiK365 and page numbers like "eMBiK365 — widokinaraj.pl str. 2", "str. 1-797", etc.
-  /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.\s*\d+(?:-\d+)?)?/gi,
-  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
+  /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.?\s*\d+(?:-\d+)?)?/gi,
+  /\bstr\.?\s*\d+(?:-\d+)?\b/gi,
+  /\bstrona\s*\d+(?:-\d+)?\b/gi,
+
   // RHZ365 poprawiony 07.09.2026 z kodami QR
   /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
   /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
   /z\s+kodami\s+QR\b/gi,
+
   // Modlitwa (YouTube) & Blog i modlitwa
   /Modlitwa\s*\(\s*YouTube\s*\)/gi,
   /Modlitwa\s+YouTube/gi,
   /Blog\s+i\s+modlitwa/gi,
+
   // Różaniec Historii Zbawienia — RHZ365
   /R[oó]żaniec\s+Historii\s+Zbawienia\s*[-—–]?\s*RHZ\s*365/gi,
   /R[oó]żaniec\s+Historii\s+Zbawienia/gi,
   /RHZ\s*365/gi,
   /widokinaraj(?:\.pl)?/gi,
   /eMBiK\s*365/gi,
+
   // Placeholders
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
@@ -315,10 +335,16 @@ export async function extractBookContentFromPdf(
     chapters.push(currentChapter);
   }
 
-  // Filter out any chapter that became empty or only contains noise
-  const validChapters = chapters.filter(
-    (ch) => ch.paragraphs.length > 0 && ch.title && ch.title.length > 1
-  );
+  // Filter out any chapter that has no paragraphs
+  const validChapters = chapters.filter((ch) => ch.paragraphs.length > 0);
+
+  validChapters.forEach((ch, idx) => {
+    let cleanTitle = sanitizeExtractedText(ch.title, customPatterns);
+    if (/^wst[eę]p\b/i.test(cleanTitle)) {
+      cleanTitle = 'Wstęp';
+    }
+    ch.title = cleanTitle || (idx === 0 ? 'Wstęp' : `Rozdział ${idx + 1}`);
+  });
 
   // If no chapters detected, create fallback chapter
   if (validChapters.length === 0) {
@@ -336,8 +362,11 @@ export async function extractBookContentFromPdf(
     });
   } else {
     // If first chapter heading exists, make sure title matches
-    if (validChapters[0].paragraphs[0]?.isHeading) {
-      validChapters[0].title = validChapters[0].paragraphs[0].text;
+    const firstP = validChapters[0].paragraphs[0];
+    if (firstP?.isHeading) {
+      let cleanFirstHeading = sanitizeExtractedText(firstP.text, customPatterns);
+      if (/^wst[eę]p\b/i.test(cleanFirstHeading)) cleanFirstHeading = 'Wstęp';
+      validChapters[0].title = cleanFirstHeading || 'Wstęp';
     }
   }
 
