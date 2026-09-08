@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   X,
   BookOpen,
@@ -108,6 +108,12 @@ eMBiK365`
   // Extracted Book Structure State
   const [bookModel, setBookModel] = useState<ExtractedBookModel | null>(null);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
+  const [extractProgress, setExtractProgress] = useState<{ current: number; total: number }>({
+    current: 0,
+    total: 0,
+  });
+  const isExtractingRef = useRef(false);
+
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<{ current: number; total: number; stage: string }>({
     current: 0,
@@ -120,13 +126,21 @@ eMBiK365`
 
   const runExtraction = useCallback(
     async (patternsToExclude: string[]) => {
+      if (isExtractingRef.current) return;
       if (!pdfDocProxy && !documentInfo?.data) return;
+
+      isExtractingRef.current = true;
       setIsExtracting(true);
+      setExtractProgress({ current: 0, total: documentInfo?.pageCount || 100 });
+
       try {
         const source = pdfDocProxy || documentInfo?.data;
         const model = await extractBookContentFromPdf(source, {
           fallbackTitle: documentInfo?.name.replace(/\.pdf$/i, '') || '',
           customExcludedPatterns: patternsToExclude,
+          onProgress: (current, total) => {
+            setExtractProgress({ current, total });
+          },
         });
 
         setBookModel(model);
@@ -143,18 +157,19 @@ eMBiK365`
       } catch (err) {
         console.error('Extraction error:', err);
       } finally {
+        isExtractingRef.current = false;
         setIsExtracting(false);
       }
     },
     [pdfDocProxy, documentInfo]
   );
 
-  // Auto-extract content when modal opens
+  // Auto-extract content ONCE when modal opens if not already extracted
   useEffect(() => {
-    if (isOpen && (pdfDocProxy || documentInfo?.data)) {
+    if (isOpen && (pdfDocProxy || documentInfo?.data) && !bookModel && !isExtractingRef.current) {
       runExtraction(excludedPatternsList);
     }
-  }, [isOpen, pdfDocProxy, documentInfo, runExtraction, excludedPatternsList]);
+  }, [isOpen, pdfDocProxy, documentInfo, bookModel, runExtraction, excludedPatternsList]);
 
   if (!isOpen) return null;
 
@@ -1055,17 +1070,44 @@ eMBiK365`
         <div className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/80 flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-xs text-zinc-400 flex items-center gap-2">
             {isExtracting ? (
-              <span className="flex items-center gap-2 text-amber-400 animate-pulse">
-                <Sparkles className="w-4 h-4" /> Filtrowanie tekstu i ekstrakcja struktury PDF...
-              </span>
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-2 text-amber-400 font-medium text-xs">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
+                  <span>
+                    Analiza i filtrowanie stron: {extractProgress.current} z {extractProgress.total || '?'}
+                    {extractProgress.total > 0 ? ` (${Math.round((extractProgress.current / extractProgress.total) * 100)}%)` : ''}
+                  </span>
+                </span>
+                {extractProgress.total > 0 && (
+                  <div className="w-48 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-amber-500 h-full rounded-full transition-all duration-100"
+                      style={{ width: `${Math.min(100, Math.round((extractProgress.current / extractProgress.total) * 100))}%` }}
+                    />
+                  </div>
+                )}
+              </div>
             ) : isExporting ? (
-              <span className="flex items-center gap-2 text-blue-400 font-medium">
-                <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                {exportProgress.stage || 'Przetwarzanie dokumentu...'}
-              </span>
+              <div className="flex flex-col gap-1">
+                <span className="flex items-center gap-2 text-blue-400 font-medium text-xs">
+                  <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin shrink-0" />
+                  <span>
+                    {exportProgress.stage || 'Przetwarzanie dokumentu...'}
+                    {exportProgress.total > 0 ? ` (${exportProgress.current} z ${exportProgress.total})` : ''}
+                  </span>
+                </span>
+                {exportProgress.total > 0 && (
+                  <div className="w-48 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="bg-blue-500 h-full rounded-full transition-all duration-100"
+                      style={{ width: `${Math.min(100, Math.round((exportProgress.current / exportProgress.total) * 100))}%` }}
+                    />
+                  </div>
+                )}
+              </div>
             ) : (
               <span className="text-zinc-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Wszystkie czcionki: 12 pt | Filtry tekstu aktywne
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" /> Wszystkie czcionki: 12 pt | Filtry tekstu aktywne
               </span>
             )}
           </div>

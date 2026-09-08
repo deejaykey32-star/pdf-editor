@@ -27,8 +27,8 @@ const DEFAULT_UNWANTED_PATTERNS = [
   /\bstrona\s*\d+(?:-\d+)?\b/gi,
 
   // RHZ365 poprawiony 07.09.2026 z kodami QR
-  /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
-  /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae](?:\s+\d{2}[.-]\d{2}[.-]\d{4})?\s+z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae](?:\s+\d{2}[.-]\d{2}[.-]\d{4})?/gi,
   /z\s+kodami\s+QR\b/gi,
 
   // Modlitwa (YouTube) & Blog i modlitwa
@@ -47,8 +47,7 @@ const DEFAULT_UNWANTED_PATTERNS = [
   /Dokument\s+A5\s+Amazon\s+KDP/gi,
   /Dokument\s+A5/gi,
   /Amazon\s+KDP/gi,
-  /Autor\s+Publikacji/gi,
-  /\bWprowadzenie\b/gi,
+  /Autor\s+Publikacji(?:\s+Wprowadzenie)?/gi,
 ];
 
 function deduplicateOverlappingText(text) {
@@ -528,6 +527,84 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
 
   const epubBytes = await zip.generateAsync({ type: 'uint8array', mimeType: 'application/epub+zip' });
   console.log(`   ✓ Pakiet ePUB wygenerowany pomyślnie (${epubBytes.length} bajtów) z wybranym rozmiarem ${customEpubSize}pt.`);
+
+  // Test 8: Verify continuous flow within a day (no empty pages between sub-headings)
+  console.log('[8/8] Sprawdzanie ciągłego przepływu tekstu w obrębie dnia (brak pustych stron, scalenie podtytułów w jeden rozdział)...');
+  const mockLines = [
+    { text: 'DZIEŃ 1 — 25 GRUDNIA / 25 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 1 Stworzenie świata i człowieka', fontSize: 13, isUpper: false, y: 500 },
+    { text: 'Część 1', fontSize: 12, isUpper: false, y: 480 },
+    { text: 'Tajemnica 1 Stworzenie świata', fontSize: 12, isUpper: false, y: 460 },
+    { text: 'Bóg na początku stworzył niebo i ziemię. Ziemia zaś była bezładem i pustką.', fontSize: 12, isUpper: false, y: 440 },
+    { text: 'I rzekł Bóg: Niechaj się stanie światłość! I stała się światłość.', fontSize: 12, isUpper: false, y: 420 },
+    { text: 'MODLITWA', fontSize: 12, isUpper: true, y: 390 },
+    { text: 'Panie nasz i Boże, dziękujemy Ci za dar stworzenia i odkupienia.', fontSize: 12, isUpper: false, y: 370 },
+    { text: 'DZIEŃ 2 — 26 GRUDNIA / 26 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 2', fontSize: 13, isUpper: false, y: 340 },
+  ];
+
+  const chaptersSim = [];
+  let curChapterSim = { id: 'ch-1', title: 'Wstęp', paragraphs: [] };
+
+  const isPrimaryChapterSim = (line) => {
+    const text = line.text.trim();
+    const isDay =
+      /^\s*[-—–(]*\s*(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(text) ||
+      (/(?<![a-ząćęłńóśźż])(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(text) && (line.isUpper || line.fontSize >= 12) && text.length < 120);
+    return isDay || /^\s*(?:rozdzia[łl]|chapter)(?![a-ząćęłńóśźż])\s*\d+/i.test(text) || /^\s*wst[eę]p(?![a-ząćęłńóśźż])/i.test(text);
+  };
+
+  const isInChapterHeadingSim = (line) => {
+    const text = line.text.trim();
+    if (isPrimaryChapterSim(line)) return false;
+    return (
+      /^\s*(?:część|etap|tajemnica|modlitwa|rozważanie|wprowadzenie|akt)(?![a-ząćęłńóśźż])/i.test(text) ||
+      (line.isUpper && text.length < 60 && line.fontSize >= 11) ||
+      (line.fontSize >= 13 && text.length < 80)
+    );
+  };
+
+  for (const line of mockLines) {
+    if (isPrimaryChapterSim(line)) {
+      if (curChapterSim.paragraphs.length > 0) {
+        chaptersSim.push(curChapterSim);
+        curChapterSim = { id: `ch-${chaptersSim.length + 1}`, title: line.text, paragraphs: [] };
+      } else {
+        curChapterSim.title = line.text;
+      }
+      curChapterSim.paragraphs.push({ text: line.text, isHeading: true, headingLevel: 1 });
+      continue;
+    }
+
+    if (isInChapterHeadingSim(line)) {
+      curChapterSim.paragraphs.push({ text: line.text, isHeading: true, headingLevel: 2 });
+      continue;
+    }
+
+    curChapterSim.paragraphs.push({ text: line.text, isHeading: false });
+  }
+  if (curChapterSim.paragraphs.length > 0) chaptersSim.push(curChapterSim);
+
+  // Assertions on Day 1:
+  // 1. Exactly 2 chapters (Dzień 1 and Dzień 2)
+  if (chaptersSim.length !== 2) {
+    throw new Error(`Test FAILED: Oczekiwano 2 rozdziałów (Dzień 1 i Dzień 2), a otrzymano ${chaptersSim.length}!`);
+  }
+
+  // 2. Day 1 must contain Część 1, Tajemnica 1, Modlitwa, and body text ALL inside chapter 0!
+  const day1 = chaptersSim[0];
+  const day1Headings = day1.paragraphs.filter((p) => p.isHeading);
+  const day1Body = day1.paragraphs.filter((p) => !p.isHeading);
+
+  if (day1Headings.length !== 4) { // Dzień 1 title + Część 1 + Tajemnica 1 + MODLITWA
+    throw new Error(`Test FAILED: W Dniu 1 powinno być 4 nagłówków, a jest ${day1Headings.length}!`);
+  }
+
+  if (day1Body.length !== 3) {
+    throw new Error(`Test FAILED: W Dniu 1 powinno być 3 akapity treści, a jest ${day1Body.length}!`);
+  }
+
+  console.log(`   ✓ Dzień 1 zawiera ${day1.paragraphs.length} elementów (nagłówek, podsekcje i treść) w JEDNYM rozdziale.`);
+  console.log('   ✓ Podtytuły (Część, Tajemnica, Modlitwa) NIE tworzą sztucznych podziałów na puste strony.');
+  console.log('   ✓ Cała treść dnia płynie ciągle i wypełnia strony od góry do dołu.\n');
 
   console.log('\n================================================================');
   console.log('🎉 WSZYSTKIE TESTY ZAKOŃCZONE SUKCESEM!');

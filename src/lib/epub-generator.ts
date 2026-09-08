@@ -312,6 +312,9 @@ ${paragraphsHtml}
 </html>`;
     zip.file(`OEBPS/text/${filename}`, chapterXhtml);
 
+    if (idx % 5 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     onProgress?.(idx + 1, bookModel.chapters.length);
   }
 

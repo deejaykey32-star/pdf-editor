@@ -350,6 +350,22 @@ export async function generateKdpA5PrintPdf({
   let isChapterStartPage = false;
   let activeChapterTitle = '';
 
+  // Title page metadata detection
+  const rawBookTitle = config.bookTitle || bookModel.title || '';
+  const cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
+
+  const rawAuthor = config.author || bookModel.author || '';
+  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
+  const isAuthorValid = Boolean(cleanAuthor && !/^(autor|autor publikacji|unknown)$/i.test(cleanAuthor.trim()));
+
+  const hasDistinctTitlePage = Boolean(
+    cleanBookTitle &&
+    cleanBookTitle.toLowerCase() !== 'wstęp' &&
+    !/^(dokument\s*a5|amazon\s*kdp|dokument\s*a5\s*amazon\s*kdp)$/i.test(cleanBookTitle.trim()) &&
+    cleanBookTitle.length > 2 &&
+    cleanBookTitle !== bookModel.chapters[0]?.title
+  );
+
   const startNewPage = () => {
     currentPage = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
     if (hasBleed) {
@@ -408,8 +424,8 @@ export async function generateKdpA5PrintPdf({
       }
     }
 
-    // Running Footer (Page Numbers)
-    if (config.pageNumbers) {
+    // Running Footer (Page Numbers, omitted on title page if distinct)
+    if (config.pageNumbers && !(currentPageNumber === 1 && hasDistinctTitlePage)) {
       const pageNumStr = String(currentPageNumber);
       const numSize = 9;
       const numWidth = regularFont.widthOfTextAtSize(pageNumStr, numSize);
@@ -433,21 +449,6 @@ export async function generateKdpA5PrintPdf({
   };
 
   // 1. Optional Half-Title / Title Page (strictly 12pt wrapped)
-  const rawBookTitle = config.bookTitle || bookModel.title || '';
-  const cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
-
-  const rawAuthor = config.author || bookModel.author || '';
-  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
-  const isAuthorValid = Boolean(cleanAuthor && !/^(autor|autor publikacji|unknown)$/i.test(cleanAuthor.trim()));
-
-  const hasDistinctTitlePage = Boolean(
-    cleanBookTitle &&
-    cleanBookTitle.toLowerCase() !== 'wstęp' &&
-    !/^(dokument\s*a5|amazon\s*kdp|dokument\s*a5\s*amazon\s*kdp)$/i.test(cleanBookTitle.trim()) &&
-    cleanBookTitle.length > 2 &&
-    cleanBookTitle !== bookModel.chapters[0]?.title
-  );
-
   startNewPage();
   const isOddFirst = (currentPageNumber - 1) % 2 !== 0;
   const leftXFirst = bleedPt + (isOddFirst ? gutterPt : outerPt);
@@ -502,6 +503,7 @@ export async function generateKdpA5PrintPdf({
 
   // 2. Typeset all chapters (Strictly 12pt format, no overflow)
   const totalChapters = bookModel.chapters.length;
+  let renderedChaptersCount = 0;
 
   for (let chIdx = 0; chIdx < totalChapters; chIdx++) {
     const chapter = bookModel.chapters[chIdx];
@@ -518,14 +520,15 @@ export async function generateKdpA5PrintPdf({
     }
 
     // Skip empty or noise chapters
-    if (!cleanChapterTitle) continue;
+    if (!cleanChapterTitle || chapter.paragraphs.length === 0) continue;
     activeChapterTitle = cleanChapterTitle;
 
     // Start each chapter on a fresh page (or on page 1 if no separate title page)
-    if (currentPageNumber > 2 || (hasDistinctTitlePage && currentPageNumber > 1)) {
+    if (renderedChaptersCount > 0 || hasDistinctTitlePage) {
       isChapterStartPage = true;
       startNewPage();
     }
+    renderedChaptersCount++;
 
     const curIsOdd = (currentPageNumber - 1) % 2 !== 0;
     const curLeftX = bleedPt + (curIsOdd ? gutterPt : outerPt);
@@ -577,7 +580,15 @@ export async function generateKdpA5PrintPdf({
       if (!cleanParaText || cleanParaText.length <= 1) continue;
 
       // Skip repeating chapter title if it was first paragraph
-      if (pIdx === 0 && paragraph.isHeading && cleanParaText === cleanChapterTitle) {
+      const isTitleDuplicate =
+        pIdx === 0 &&
+        paragraph.isHeading &&
+        (
+          cleanParaText === cleanChapterTitle ||
+          cleanParaText.toLowerCase().replace(/[^a-ząćęłńóśźż0-9]/gi, '') ===
+            cleanChapterTitle.toLowerCase().replace(/[^a-ząćęłńóśźż0-9]/gi, '')
+        );
+      if (isTitleDuplicate) {
         continue;
       }
 
@@ -589,6 +600,10 @@ export async function generateKdpA5PrintPdf({
       const pFont = paragraph.isHeading || paragraph.isBold || isDayHeading ? boldFont : regularFont;
 
       if (paragraph.isHeading || isDayHeading) {
+        // Prevent orphan headings at the bottom of the page
+        if (cursorY - lineHeightPt * 3 < bottomPt + 10) {
+          startNewPage();
+        }
         cursorY -= 10;
       }
 
@@ -691,9 +706,16 @@ export async function generateKdpA5PrintPdf({
         cursorY -= lineHeightPt;
       }
 
+      if (pIdx % 25 === 0) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
       cursorY -= paragraph.isHeading ? 8 : 4;
     }
 
+    if (chIdx % 2 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
     onProgress?.(chIdx + 1, totalChapters);
   }
 

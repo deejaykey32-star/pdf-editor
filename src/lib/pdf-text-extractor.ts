@@ -37,8 +37,8 @@ export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
   /\bstrona\s*\d+(?:-\d+)?\b/gi,
 
   // RHZ365 poprawiony 07.09.2026 z kodami QR
-  /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
-  /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae](?:\s+\d{2}[.-]\d{2}[.-]\d{4})?\s+z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae](?:\s+\d{2}[.-]\d{2}[.-]\d{4})?/gi,
   /z\s+kodami\s+QR\b/gi,
 
   // Modlitwa (YouTube) & Blog i modlitwa
@@ -57,8 +57,7 @@ export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
   /Dokument\s+A5\s+Amazon\s+KDP/gi,
   /Dokument\s+A5/gi,
   /Amazon\s+KDP/gi,
-  /Autor\s+Publikacji/gi,
-  /\bWprowadzenie\b/gi,
+  /Autor\s+Publikacji(?:\s+Wprowadzenie)?/gi,
 ];
 
 /**
@@ -192,6 +191,7 @@ export function sanitizeExtractedText(
 export interface ExtractBookOptions {
   fallbackTitle?: string;
   customExcludedPatterns?: string[];
+  onProgress?: (current: number, total: number) => void;
 }
 
 /**
@@ -241,7 +241,38 @@ export async function extractBookContentFromPdf(
     customPatterns
   );
 
+  // Process lines into paragraphs and chapters
+  let paragraphBuffer: string[] = [];
+  let lastLineY: number | null = null;
+  let lastFontSize: number = 10;
+
+  const flushParagraph = (isHeading: boolean = false, headingLvl: number = 1, fSize: number = 12) => {
+    if (paragraphBuffer.length === 0) return;
+    const fullText = paragraphBuffer.join(' ').replace(/\s+/g, ' ').trim();
+    paragraphBuffer = [];
+    const cleaned = sanitizeExtractedText(fullText, customPatterns);
+    if (!cleaned || cleaned.length <= 1) return;
+
+    const words = cleaned.split(/\s+/).length;
+    totalWordsCount += words;
+
+    const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleaned);
+    currentChapter.paragraphs.push({
+      text: cleaned,
+      isHeading: isHeading || isDayHeading,
+      headingLevel: isHeading ? headingLvl : (isDayHeading ? 2 : 0),
+      fontSize: 12, // Strictly 12pt format
+      isBold: isHeading || isDayHeading,
+    });
+  };
+
   for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+    // Yield to the browser event loop every 2 pages to keep UI fluid and responsive
+    if (pageNum % 2 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    options.onProgress?.(pageNum, numPages);
+
     const page = await proxy.getPage(pageNum);
     const content = await page.getTextContent();
     const items = content.items as any[];
@@ -270,23 +301,41 @@ export async function extractBookContentFromPdf(
     }
 
     // Filter out duplicate overlapping text items (shadows, multi-layer rendering passes)
+    // Uses spatial buckets indexed by Y coordinate for ultra-fast O(N) lookup
+    const spatialBuckets = new Map<number, RawTextItem[]>();
     const nonOverlappingItems: RawTextItem[] = [];
+
     for (const item of rawItems) {
-      const isDuplicateOverlap = nonOverlappingItems.some((existing) => {
-        const sameY = Math.abs(existing.y - item.y) <= 1.5;
-        const sameX = Math.abs(existing.x - item.x) <= 2.5;
-        if (sameY && sameX) {
-          return (
-            existing.str.trim() === item.str.trim() ||
-            existing.str.includes(item.str) ||
-            item.str.includes(existing.str)
-          );
+      const bucketKey = Math.round(item.y / 3);
+      let isDuplicateOverlap = false;
+
+      // Only inspect neighboring Y buckets (-1, 0, 1)
+      for (let b = bucketKey - 1; b <= bucketKey + 1; b++) {
+        const bucket = spatialBuckets.get(b);
+        if (!bucket) continue;
+        for (const existing of bucket) {
+          if (Math.abs(existing.y - item.y) <= 1.5 && Math.abs(existing.x - item.x) <= 2.5) {
+            if (
+              existing.str.trim() === item.str.trim() ||
+              existing.str.includes(item.str) ||
+              item.str.includes(existing.str)
+            ) {
+              isDuplicateOverlap = true;
+              break;
+            }
+          }
         }
-        return false;
-      });
+        if (isDuplicateOverlap) break;
+      }
 
       if (!isDuplicateOverlap) {
         nonOverlappingItems.push(item);
+        const existingBucket = spatialBuckets.get(bucketKey);
+        if (existingBucket) {
+          existingBucket.push(item);
+        } else {
+          spatialBuckets.set(bucketKey, [item]);
+        }
       }
     }
 
@@ -371,69 +420,85 @@ export async function extractBookContentFromPdf(
       pushCleanedLine(currentLineItems, currentLineY);
     }
 
-    // Process lines into paragraphs and chapters
-    let paragraphBuffer: string[] = [];
-    let lastLineY: number | null = null;
-    let lastFontSize: number = 10;
-
-    const flushParagraph = (isHeading: boolean = false, headingLvl: number = 1, fSize: number = 12) => {
-      if (paragraphBuffer.length === 0) return;
-      const fullText = paragraphBuffer.join(' ').replace(/\s+/g, ' ').trim();
-      paragraphBuffer = [];
-      const cleaned = sanitizeExtractedText(fullText, customPatterns);
-      if (!cleaned || cleaned.length <= 1) return;
-
-      const words = cleaned.split(/\s+/).length;
-      totalWordsCount += words;
-
-      const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleaned);
-      currentChapter.paragraphs.push({
-        text: cleaned,
-        isHeading: isHeading || isDayHeading,
-        headingLevel: isHeading ? headingLvl : (isDayHeading ? 2 : 0),
-        fontSize: 12, // Strictly 12pt format
-        isBold: isHeading || isDayHeading,
-      });
-    };
-
     for (let l = 0; l < lines.length; l++) {
       const line = lines[l];
-      const isChapterHeadingCandidate =
-        line.fontSize >= 13 ||
-        /^(rozdzia[łl]|chapter|część|akt|wstęp|prolog|epilog)\b/i.test(line.text) ||
-        /\b(?:dzie[nń])\s*\d+\b/i.test(line.text) ||
-        (line.isUpper && line.text.length < 60 && line.fontSize >= 11);
+      const trimmedText = line.text.trim();
 
-      // Check if this indicates a new chapter
-      if (isChapterHeadingCandidate && currentChapter.paragraphs.length > 0) {
+      const isDayHeading =
+        /^\s*[-—–(]*\s*(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) ||
+        (/(?<![a-ząćęłńóśźż])(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) && (line.isUpper || line.fontSize >= 12) && trimmedText.length < 120);
+
+      const isPrimaryChapter =
+        isDayHeading ||
+        (/^\s*(?:rozdzia[łl]|chapter)(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) && trimmedText.length < 100) ||
+        (/^\s*wst[eę]p(?![a-ząćęłńóśźż])/i.test(trimmedText) && trimmedText.length < 100) ||
+        (/^\s*(?:prolog|epilog|zako[nń]czenie)(?![a-ząćęłńóśźż])/i.test(trimmedText) && trimmedText.length < 100);
+
+      const isInChapterHeading =
+        !isPrimaryChapter &&
+        (
+          /^\s*(?:część|etap|tajemnica|modlitwa|rozważanie|wprowadzenie|akt|wezwanie|czytanie|psalm|pieśń)(?![a-ząćęłńóśźż])/i.test(trimmedText) ||
+          (line.isUpper && trimmedText.length < 60 && line.fontSize >= 11) ||
+          (line.fontSize >= 13 && trimmedText.length < 80)
+        );
+
+      if (isPrimaryChapter) {
         flushParagraph();
-        if (currentChapter.paragraphs.length > 0) {
-          if (currentChapter.pageRange) {
-            currentChapter.pageRange.end = pageNum;
-          }
-          chapters.push(currentChapter);
-        }
 
         let cleanedTitle = sanitizeExtractedText(line.text, customPatterns);
         if (/^wst[eę]p\b/i.test(cleanedTitle)) {
           cleanedTitle = 'Wstęp';
         }
 
-        currentChapter = {
-          id: `ch-${chapters.length + 1}`,
-          title: cleanedTitle || `Rozdział ${chapters.length + 1}`,
-          paragraphs: [],
-          pageRange: { start: pageNum, end: pageNum },
-        };
+        if (currentChapter.paragraphs.length > 0) {
+          if (currentChapter.pageRange) {
+            currentChapter.pageRange.end = pageNum;
+          }
+          chapters.push(currentChapter);
 
-        // Add heading as first element of new chapter (strictly 12pt bold)
+          currentChapter = {
+            id: `ch-${chapters.length + 1}`,
+            title: cleanedTitle || (isDayHeading ? 'Dzień' : `Rozdział ${chapters.length + 1}`),
+            paragraphs: [],
+            pageRange: { start: pageNum, end: pageNum },
+          };
+        } else {
+          currentChapter.title = cleanedTitle || (isDayHeading ? 'Dzień' : 'Wstęp');
+          currentChapter.pageRange = { start: pageNum, end: pageNum };
+        }
+
+        // Add primary heading as first element of chapter (strictly 12pt bold)
         currentChapter.paragraphs.push({
-          text: cleanedTitle || `Rozdział ${chapters.length + 1}`,
+          text: cleanedTitle || currentChapter.title,
           isHeading: true,
           headingLevel: 1,
           fontSize: 12,
           isBold: true,
         });
+
+        const words = (cleanedTitle || currentChapter.title).split(/\s+/).length;
+        totalWordsCount += words;
+        lastLineY = line.y;
+        lastFontSize = line.fontSize;
+        continue;
+      }
+
+      if (isInChapterHeading) {
+        flushParagraph();
+
+        let cleanedSubHeading = sanitizeExtractedText(line.text, customPatterns);
+        if (cleanedSubHeading && cleanedSubHeading.length > 1) {
+          currentChapter.paragraphs.push({
+            text: cleanedSubHeading,
+            isHeading: true,
+            headingLevel: 2,
+            fontSize: 12,
+            isBold: true,
+          });
+          const words = cleanedSubHeading.split(/\s+/).length;
+          totalWordsCount += words;
+        }
+
         lastLineY = line.y;
         lastFontSize = line.fontSize;
         continue;
@@ -452,7 +517,13 @@ export async function extractBookContentFromPdf(
       lastFontSize = line.fontSize;
     }
 
-    flushParagraph(false, 0, 12);
+    // Between pages: flush if buffer ends with sentence punctuation or empty page transition
+    if (paragraphBuffer.length > 0) {
+      const bufferText = paragraphBuffer.join(' ').trim();
+      if (/[.!?:]|[.!?:][”"]$/.test(bufferText)) {
+        flushParagraph(false, 0, 12);
+      }
+    }
 
     if (currentChapter.pageRange) {
       currentChapter.pageRange.end = pageNum;
@@ -460,6 +531,8 @@ export async function extractBookContentFromPdf(
 
     page.cleanup();
   }
+
+  flushParagraph(false, 0, 12);
 
   if (currentChapter.paragraphs.length > 0) {
     chapters.push(currentChapter);
