@@ -50,6 +50,7 @@ export interface DocxConfig {
   runningHeader: boolean;
   pageNumbers: boolean;
   mirrorMargins: boolean;
+  includeTableOfContents: boolean; // automatic TOC with hyperlinks at end of book
   includeQRCodes: boolean;
   excludedPatterns?: string[];
 }

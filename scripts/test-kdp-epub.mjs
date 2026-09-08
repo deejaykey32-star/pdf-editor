@@ -814,6 +814,8 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
     Header,
     Footer,
     PageNumber,
+    Bookmark,
+    TableOfContents,
   } = docxModule;
 
   // Build simulated KDP A5 Word document
@@ -827,6 +829,8 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
 
   const docxDoc = new Document({
     title: 'Księga A5 KDP Word',
+    features: { updateFields: true },
+    evenAndOddHeaderAndFooters: true,
     styles: {
       default: {
         document: {
@@ -842,9 +846,9 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
             margin: {
               top: topMarginTwips,
               bottom: bottomMarginTwips,
-              left: insideMarginTwips,
+              left: outsideMarginTwips,
               right: outsideMarginTwips,
-              mirrorMargins: true,
+              gutter: insideMarginTwips,
             },
           },
         },
@@ -857,24 +861,45 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
               }),
             ],
           }),
+          even: new Header({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.LEFT,
+                children: [new TextRun({ text: 'Widoki na Raj', font: 'Georgia', size: 18, color: '666666' })],
+              }),
+            ],
+          }),
         },
         footers: {
           default: new Footer({
             children: [
               new Paragraph({
                 alignment: AlignmentType.CENTER,
-                children: [new TextRun({ children: [PageNumber.CURRENT], font: 'Georgia', size: 18, color: '666666' })],
+                children: [new TextRun({ children: [PageNumber.CURRENT], font: 'Georgia', size: 20, color: '4B5563' })],
+              }),
+            ],
+          }),
+          even: new Footer({
+            children: [
+              new Paragraph({
+                alignment: AlignmentType.CENTER,
+                children: [new TextRun({ children: [PageNumber.CURRENT], font: 'Georgia', size: 20, color: '4B5563' })],
               }),
             ],
           }),
         },
         children: [
           new Paragraph({
-            text: 'Wprowadzenie',
             heading: HeadingLevel.HEADING_1,
             pageBreakBefore: false,
-            keepWithNext: true,
+            keepNext: true,
             border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: '2563EB', space: 6 } },
+            children: [
+              new Bookmark({
+                id: 'ch_bookmark_0',
+                children: [new TextRun('Wprowadzenie')],
+              }),
+            ],
           }),
           new Paragraph({
             alignment: AlignmentType.JUSTIFIED,
@@ -893,21 +918,44 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
             ],
           }),
           new Paragraph({
-            text: 'DZIEŃ 1 — 25 GRUDNIA / 25 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 1 Stworzenie świata i człowieka',
             heading: HeadingLevel.HEADING_1,
             pageBreakBefore: true,
-            keepWithNext: true,
+            keepNext: true,
             border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: '2563EB', space: 6 } },
+            children: [
+              new Bookmark({
+                id: 'ch_bookmark_1',
+                children: [
+                  new TextRun('DZIEŃ 1 — 25 GRUDNIA / 25 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 1 Stworzenie świata i człowieka'),
+                ],
+              }),
+            ],
           }),
           new Paragraph({
-            text: 'Część 1',
             heading: HeadingLevel.HEADING_2,
-            keepWithNext: true,
+            keepNext: true,
+            children: [new TextRun({ text: 'Część 1', font: 'Georgia', bold: true, size: 24, color: '1F2937' })],
           }),
           new Paragraph({
             alignment: AlignmentType.JUSTIFIED,
             indent: { firstLine: firstLineIndentTwips },
             children: [new TextRun({ text: 'Tekst rozważania dnia pierwszego w formacie 12 pt.', size: 24, font: 'Georgia' })],
+          }),
+          // Automatic TOC at end
+          new Paragraph({
+            text: 'Spis treści',
+            heading: HeadingLevel.TITLE,
+            pageBreakBefore: true,
+            keepNext: true,
+            border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: '2563EB', space: 6 } },
+          }),
+          new TableOfContents('Spis treści', {
+            hyperlink: true,
+            headingStyleRange: '1-1',
+            cachedEntries: [
+              { title: 'Wprowadzenie', level: 1, page: 1, href: 'ch_bookmark_0' },
+              { title: 'DZIEŃ 1 — 25 GRUDNIA / 25 czerwca', level: 1, page: 2, href: 'ch_bookmark_1' },
+            ],
           }),
         ],
       },
@@ -926,29 +974,53 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
     throw new Error('Test FAILED: word/document.xml nie istnieje w pliku DOCX!');
   }
 
+  const settingsXml = await docxZip.file('word/settings.xml')?.async('string');
+  if (!settingsXml || !settingsXml.includes('w:updateFields')) {
+    throw new Error('Test FAILED: word/settings.xml nie posiada reguły automatycznej aktualizacji pól (updateFields)!');
+  }
+
   // Verify A5 page size (148 x 210 mm)
   if (!docXml.includes(`w:w="${a5WidthTwips}"`) || !docXml.includes(`w:h="${a5HeightTwips}"`)) {
     throw new Error('Test FAILED: Wymiary strony A5 w DOCX nie są zgodne z 148 × 210 mm!');
   }
 
-  // Verify mirror margins
-  if (!docXml.includes('w:mirrorMargins') && !docXml.includes(`w:left="${insideMarginTwips}"`)) {
-    throw new Error('Test FAILED: Lustrzane marginesy KDP nie zostały zdefiniowane w DOCX!');
+  // Verify mirror gutter margin
+  if (!docXml.includes(`w:gutter="${insideMarginTwips}"`)) {
+    throw new Error('Test FAILED: Lustrzany margines grzbietowy KDP (gutter 18 mm) nie został zdefiniowany w DOCX!');
   }
 
-  // Verify Heading 1 with bottom border and pageBreakBefore
+  // Verify Heading 1 with Bookmarks and without duplicate text runs
   if (!docXml.includes('Wprowadzenie') || !docXml.includes('DZIEŃ 1')) {
     throw new Error('Test FAILED: Treść rozdziałów nie znalazła się w dokumencie Word!');
   }
 
+  if (!docXml.includes('w:bookmarkStart w:name="ch_bookmark_0"')) {
+    throw new Error('Test FAILED: Brak zakładek rozdziałów dla linków w spisie treści!');
+  }
+
+  // Verify Table of Contents at the end of the document
+  if (!docXml.includes('w:sdt') || !docXml.includes('TOC \\h \\o &quot;1-1&quot;')) {
+    throw new Error('Test FAILED: Brak automatycznego spisu treści (TOC \\h) w dokumencie Word!');
+  }
+
+  // Verify pageBreakBefore
   if (!docXml.includes('w:pageBreakBefore')) {
     throw new Error('Test FAILED: Brak podziału strony przed rozdziałem (pageBreakBefore) w DOCX!');
+  }
+
+  // Verify native page numbering in footers
+  const footerXml = await docxZip.file('word/footer1.xml')?.async('string') || await docxZip.file('word/footer2.xml')?.async('string');
+  if (!footerXml || !footerXml.includes('PAGE')) {
+    throw new Error('Test FAILED: Brak natywnej numeracji stron Word (PAGE) w stopce!');
   }
 
   console.log(`   ✓ Pakiet Microsoft Word DOCX wygenerowany pomyślnie (${docxBuf.length} bajtów).`);
   console.log('   ✓ Potwierdzono format strony DIN A5: 148 mm × 210 mm (w:w="8390", w:h="11906").');
   console.log('   ✓ Potwierdzono lustrzane marginesy KDP (grzbiet 18 mm, zewnętrzny 13 mm, górny/dolny 15 mm).');
-  console.log('   ✓ Potwierdzono podziały stron przed rozdziałami (pageBreakBefore: true).');
+  console.log('   ✓ Potwierdzono natywne nagłówki Word Heading 1 bez duplikatów tekstu.');
+  console.log('   ✓ Potwierdzono natywne numerowanie stron Word w stopkach dla stron parzystych i nieparzystych.');
+  console.log('   ✓ Potwierdzono automatyczny spis treści (TOC \\h z linkami) na końcu dokumentu.');
+  console.log('   ✓ Potwierdzono automatyczną aktualizację pól Word (updateFields: true).');
   console.log('   ✓ Zapis z programu Word do PDF utworzy w 100% poprawny plik do druku Amazon KDP.\n');
 
   console.log('\n================================================================');

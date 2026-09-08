@@ -121,6 +121,7 @@ eMBiK365`
     runningHeader: true,
     pageNumbers: true,
     mirrorMargins: true,
+    includeTableOfContents: true,
     includeQRCodes: true,
   });
 
@@ -1131,7 +1132,17 @@ eMBiK365`
                         onChange={(e) => setDocxConfig((prev) => ({ ...prev, pageNumbers: e.target.checked }))}
                         className="rounded bg-zinc-800 border-zinc-700 text-sky-600 focus:ring-0"
                       />
-                      <span>Numeracja stron w stopce (Page Numbering)</span>
+                      <span>Natywna numeracja stron Word w stopce (Page Numbering)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={docxConfig.includeTableOfContents}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, includeTableOfContents: e.target.checked }))}
+                        className="rounded bg-zinc-800 border-zinc-700 text-sky-600 focus:ring-0"
+                      />
+                      <span>Automatyczny spis treści na końcu dokumentu (TOC z linkami Word)</span>
                     </label>
 
                     <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">

@@ -13,11 +13,13 @@ import {
   PageNumber,
   ImageRun,
   PageBreak,
+  Bookmark,
+  TableOfContents,
 } from 'docx';
 import { DocxConfig, ExtractedBookModel } from '@/types/kdp-epub';
 import { QRCodeItem } from '@/types/pdf';
 import { generateQRPngBytes, resolvePageContent } from './qr-generator';
-import { sanitizeExtractedText } from './pdf-text-extractor';
+import { sanitizeExtractedText, deduplicateDayHeading, parseDayHeading } from './pdf-text-extractor';
 
 export interface GenerateDocxOptions {
   config: DocxConfig;
@@ -144,6 +146,11 @@ export async function generateKdpDocxPackage({
 
   // 2. Process Chapters (Chapter 0 = Wprowadzenie, Chapters 1..175 = Dni)
   const totalChapters = bookModel.chapters.length;
+  interface TocChapterEntry {
+    title: string;
+    bookmarkId: string;
+  }
+  const tocChapters: TocChapterEntry[] = [];
 
   for (let chIdx = 0; chIdx < totalChapters; chIdx++) {
     const chapter = bookModel.chapters[chIdx];
@@ -158,13 +165,18 @@ export async function generateKdpDocxPackage({
     }
     if (!cleanChapterTitle || chapter.paragraphs.length === 0) continue;
 
+    const bookmarkId = `ch_bookmark_${chIdx}`;
+    tocChapters.push({
+      title: cleanChapterTitle,
+      bookmarkId,
+    });
+
     onProgress?.(chIdx + 1, totalChapters, `Formatowanie rozdziału: ${cleanChapterTitle}...`);
 
-    // Chapter Title (Heading 1)
-    // Starts on a new page in Word, has bottom divider line, strictly 12pt bold
+    // Chapter Title (Native Word Heading 1 with Bookmark for TOC links)
+    // Starts on a new page in Word, has bottom divider line, formatted with native Word Heading 1 style
     children.push(
       new Paragraph({
-        text: cleanChapterTitle,
         heading: HeadingLevel.HEADING_1,
         pageBreakBefore: chIdx > 0 || !!bookTitle, // start on a fresh page
         keepNext: true,
@@ -179,12 +191,13 @@ export async function generateKdpDocxPackage({
           },
         },
         children: [
-          new TextRun({
-            text: cleanChapterTitle,
-            font: fontFamily,
-            bold: true,
-            size: fontHalfPoints,
-            color: '111827',
+          new Bookmark({
+            id: bookmarkId,
+            children: [
+              new TextRun({
+                text: cleanChapterTitle,
+              }),
+            ],
           }),
         ],
       })
@@ -201,13 +214,18 @@ export async function generateKdpDocxPackage({
       }
       if (!cleanParaText || cleanParaText.length <= 1) continue;
 
-      // Skip duplicate of chapter title on the first paragraph
-      if (
-        pIdx === 0 &&
-        p.isHeading &&
-        (cleanParaText === cleanChapterTitle ||
-          (cleanParaText === 'Wprowadzenie' && cleanChapterTitle === 'Wprowadzenie'))
-      ) {
+      // Skip duplicate of chapter title or day header (remove duplicate black bold heading)
+      const normPara = deduplicateDayHeading(cleanParaText).replace(/\s+/g, ' ').trim().toLowerCase();
+      const normTitle = deduplicateDayHeading(cleanChapterTitle).replace(/\s+/g, ' ').trim().toLowerCase();
+
+      const isTitleOrDayDuplicate =
+        (pIdx === 0 && p.isHeading) ||
+        (p.isHeading && p.headingLevel === 1) ||
+        normPara === normTitle ||
+        (cleanChapterTitle === 'Wprowadzenie' && (/^wst[eę]p\b/i.test(cleanParaText) || cleanParaText === 'Wprowadzenie')) ||
+        (/^dzień\s+\d+/i.test(cleanParaText) && parseDayHeading(cleanParaText)?.dayNum === chIdx);
+
+      if (isTitleOrDayDuplicate) {
         continue;
       }
 
@@ -267,9 +285,9 @@ export async function generateKdpDocxPackage({
   if (config.includeQRCodes && qrItems.length > 0) {
     onProgress?.(totalChapters, totalChapters, 'Dodawanie załącznika z kodami QR...');
 
+    const qrBookmarkId = 'appendix_qr_codes';
     children.push(
       new Paragraph({
-        text: 'Dodatek: Kody QR do Publikacji',
         heading: HeadingLevel.HEADING_1,
         pageBreakBefore: true,
         keepNext: true,
@@ -284,12 +302,13 @@ export async function generateKdpDocxPackage({
           },
         },
         children: [
-          new TextRun({
-            text: 'Dodatek: Kody QR do Publikacji',
-            font: fontFamily,
-            bold: true,
-            size: fontHalfPoints,
-            color: '111827',
+          new Bookmark({
+            id: qrBookmarkId,
+            children: [
+              new TextRun({
+                text: 'Dodatek: Kody QR do Publikacji',
+              }),
+            ],
           }),
         ],
       })
@@ -353,11 +372,51 @@ export async function generateKdpDocxPackage({
     }
   }
 
-  // 4. Configure Headers and Footers
+  // 4. Automatic Table of Contents at the end of the document (Spis treści na końcu z linkami)
+  if (config.includeTableOfContents !== false) {
+    onProgress?.(totalChapters, totalChapters, 'Generowanie automatycznego spisu treści...');
+
+    children.push(
+      new Paragraph({
+        text: 'Spis treści',
+        heading: HeadingLevel.TITLE,
+        pageBreakBefore: true,
+        keepNext: true,
+        alignment: AlignmentType.LEFT,
+        spacing: { before: 360, after: 240 },
+        border: {
+          bottom: {
+            style: BorderStyle.SINGLE,
+            size: 12,
+            color: '2563EB',
+            space: 6,
+          },
+        },
+      })
+    );
+
+    const cachedEntries = tocChapters.map((ch, idx) => ({
+      title: ch.title,
+      level: 1,
+      page: idx + 1,
+      href: ch.bookmarkId,
+    }));
+
+    children.push(
+      new TableOfContents('Spis treści', {
+        hyperlink: true,
+        headingStyleRange: '1-1',
+        cachedEntries,
+      })
+    );
+  }
+
+  // 5. Configure Headers and Footers (Natywne numerowanie stron i żywa pagina)
   const headersConfig: any = {};
   const footersConfig: any = {};
 
   if (config.runningHeader) {
+    // Odd pages (Recto): right-aligned
     headersConfig.default = new Header({
       children: [
         new Paragraph({
@@ -374,19 +433,19 @@ export async function generateKdpDocxPackage({
         }),
       ],
     });
-  }
 
-  if (config.pageNumbers) {
-    footersConfig.default = new Footer({
+    // Even pages (Verso): left-aligned
+    headersConfig.even = new Header({
       children: [
         new Paragraph({
-          alignment: AlignmentType.CENTER,
+          alignment: AlignmentType.LEFT,
           children: [
             new TextRun({
-              children: [PageNumber.CURRENT],
+              text: bookTitle || 'Publikacja Amazon KDP',
               font: fontFamily,
               size: 18, // 9 pt
               color: '6B7280',
+              italics: true,
             }),
           ],
         }),
@@ -394,11 +453,37 @@ export async function generateKdpDocxPackage({
     });
   }
 
-  // 5. Build Document with A5 Page Size and Mirror Margins
+  if (config.pageNumbers) {
+    // Native Word Page Numbering in Footers for both Odd (default) and Even pages
+    const createPageNumberFooter = () =>
+      new Footer({
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [
+              new TextRun({
+                children: [PageNumber.CURRENT],
+                font: fontFamily,
+                size: 20, // 10 pt
+                color: '4B5563',
+              }),
+            ],
+          }),
+        ],
+      });
+
+    footersConfig.default = createPageNumberFooter();
+    footersConfig.even = createPageNumberFooter();
+  }
+
+  // 6. Build Document with A5 Page Size and Mirror Margins
   const doc = new Document({
     creator: 'PDF Editor & Amazon KDP Studio',
     title: bookTitle,
     description: 'Amazon KDP A5 Print Publication formatted for Microsoft Word and PDF export',
+    features: {
+      updateFields: true,
+    },
     evenAndOddHeaderAndFooters: true,
     styles: {
       default: {
