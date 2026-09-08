@@ -20,11 +20,12 @@ import {
   RefreshCw,
   ShieldCheck,
 } from 'lucide-react';
-import { KdpPrintConfig, EpubConfig, ExtractedBookModel } from '@/types/kdp-epub';
+import { KdpPrintConfig, EpubConfig, DocxConfig, ExtractedBookModel } from '@/types/kdp-epub';
 import { QRCodeItem, PdfDocumentInfo } from '@/types/pdf';
 import { extractBookContentFromPdf } from '@/lib/pdf-text-extractor';
 import { generateKdpA5PrintPdf } from '@/lib/pdf-typesetter';
 import { generateEpubPackage } from '@/lib/epub-generator';
+import { generateKdpDocxPackage } from '@/lib/docx-generator';
 
 interface KdpEpubExportModalProps {
   isOpen: boolean;
@@ -41,7 +42,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   pdfDocProxy,
   qrItems,
 }) => {
-  const [activeTab, setActiveTab] = useState<'kdp-pdf' | 'epub'>('kdp-pdf');
+  const [activeTab, setActiveTab] = useState<'kdp-pdf' | 'epub' | 'docx'>('kdp-pdf');
 
   // Exclusion filter text (lines to strip from extracted text)
   const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
@@ -105,6 +106,24 @@ eMBiK365`
     includeQRCodes: true,
   });
 
+  // Microsoft Word DOCX Configuration (Amazon KDP A5 Print Setup)
+  const [docxConfig, setDocxConfig] = useState<DocxConfig>({
+    title: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || '',
+    author: '',
+    gutterMarginMm: 18,
+    outerMarginMm: 13,
+    topMarginMm: 15,
+    bottomMarginMm: 15,
+    fontSizePt: 12,
+    lineSpacing: 1.15,
+    fontFamily: 'georgia',
+    firstLineIndentMm: 5,
+    runningHeader: true,
+    pageNumbers: true,
+    mirrorMargins: true,
+    includeQRCodes: true,
+  });
+
   // Extracted Book Structure State
   const [bookModel, setBookModel] = useState<ExtractedBookModel | null>(null);
   const [isExtracting, setIsExtracting] = useState<boolean>(false);
@@ -150,6 +169,11 @@ eMBiK365`
           author: model.author || prev.author,
         }));
         setEpubConfig((prev) => ({
+          ...prev,
+          title: model.title || prev.title,
+          author: model.author || prev.author,
+        }));
+        setDocxConfig((prev) => ({
           ...prev,
           title: model.title || prev.title,
           author: model.author || prev.author,
@@ -269,6 +293,54 @@ eMBiK365`
     }
   };
 
+  const handleExportDocx = async () => {
+    if (!bookModel) return;
+    const currentFontSize = docxConfig.fontSizePt || 12;
+    setIsExporting(true);
+    setExportProgress({
+      current: 0,
+      total: 100,
+      stage: `Generowanie pliku Microsoft Word (.docx) KDP A5 (${currentFontSize} pt)...`,
+    });
+
+    try {
+      const docxBytes = await generateKdpDocxPackage({
+        config: {
+          ...docxConfig,
+          fontSizePt: currentFontSize,
+          excludedPatterns: excludedPatternsList,
+        },
+        bookModel,
+        qrItems,
+        onProgress: (cur, tot, stage) => {
+          setExportProgress({
+            current: cur,
+            total: tot,
+            stage,
+          });
+        },
+      });
+
+      const blob = new Blob([docxBytes.buffer as ArrayBuffer], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      const cleanName = (docxConfig.title || 'ksiazka').replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ_-]/g, '_');
+      a.download = `${cleanName}_KDP_A5_${currentFontSize}pt_Word.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      console.error('DOCX Export Error:', err);
+      alert('Wystąpił błąd podczas generowania pliku Word DOCX: ' + (err?.message || err));
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in-95 duration-200">
@@ -281,7 +353,7 @@ eMBiK365`
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base font-semibold text-white">
-                  Studio Publikacji Amazon KDP & eBook
+                  Studio Publikacji Amazon KDP & eBook & Word
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full">
                   Format A5 & Wszystkie Czcionki 12 pt
@@ -326,6 +398,17 @@ eMBiK365`
             >
               <Tablet className="w-4 h-4" />
               <span>eBook Amazon KDP (ePUB 3.0)</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('docx')}
+              className={`py-3 text-xs font-medium border-b-2 flex items-center gap-2 transition cursor-pointer ${
+                activeTab === 'docx'
+                  ? 'border-sky-500 text-sky-400 font-semibold'
+                  : 'border-transparent text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <FileText className="w-4 h-4 text-sky-400" />
+              <span>Dokument Word (DOCX A5 KDP)</span>
             </button>
           </div>
 
@@ -689,7 +772,7 @@ eMBiK365`
                   </div>
                 </div>
               </>
-            ) : (
+            ) : activeTab === 'epub' ? (
               /* TAB 2: EPUB SETTINGS */
               <>
                 <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
@@ -881,6 +964,213 @@ eMBiK365`
                   </div>
                 )}
               </>
+            ) : (
+              /* TAB 3: MICROSOFT WORD DOCX SETTINGS */
+              <>
+                {/* 1. KDP Word Information Box */}
+                <div className="bg-sky-500/10 border border-sky-500/20 rounded-lg p-4 space-y-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-sky-300">
+                    <FileText className="w-4 h-4 text-sky-400" />
+                    <span>Zgodność z Amazon KDP w Microsoft Word (.docx)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-300 leading-relaxed">
+                    Wygenerowany plik <strong className="text-white">.docx</strong> posiada zdefiniowany format <strong>DIN A5 (148 × 210 mm)</strong>, 
+                    <strong> lustrzane marginesy introligatorskie KDP</strong> oraz podział strony przed każdym dniem i wprowadzeniem. 
+                    Po otwarciu w aplikacji Word wystarczy wybrać <em>„Plik → Zapisz jako PDF”</em> lub <em>„Eksportuj do PDF”</em>, 
+                    aby uzyskać w 100% gotowy do druku plik PDF spełniający wszystkie wymagania Amazon KDP.
+                  </p>
+                </div>
+
+                {/* 2. Marginesy introligatorskie Word */}
+                <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-amber-400" />
+                      Lustrzane Marginesy Introligatorskie Word (Mirror Margins)
+                    </label>
+                    <span className="text-[10px] text-amber-400 font-mono">
+                      A5 (148 × 210 mm)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="bg-zinc-800/60 p-2 rounded border border-zinc-700/60">
+                      <label className="text-[10px] text-zinc-400 block">Wewnętrzny (Grzbiet)</label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <input
+                          type="number"
+                          min="10"
+                          max="35"
+                          value={docxConfig.gutterMarginMm}
+                          onChange={(e) => setDocxConfig((prev) => ({ ...prev, gutterMarginMm: parseInt(e.target.value) || 18 }))}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white"
+                        />
+                        <span className="text-xs text-zinc-400">mm</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-800/60 p-2 rounded border border-zinc-700/60">
+                      <label className="text-[10px] text-zinc-400 block">Zewnętrzny</label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <input
+                          type="number"
+                          min="8"
+                          max="30"
+                          value={docxConfig.outerMarginMm}
+                          onChange={(e) => setDocxConfig((prev) => ({ ...prev, outerMarginMm: parseInt(e.target.value) || 13 }))}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white"
+                        />
+                        <span className="text-xs text-zinc-400">mm</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-800/60 p-2 rounded border border-zinc-700/60">
+                      <label className="text-[10px] text-zinc-400 block">Górny</label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <input
+                          type="number"
+                          min="10"
+                          max="30"
+                          value={docxConfig.topMarginMm}
+                          onChange={(e) => setDocxConfig((prev) => ({ ...prev, topMarginMm: parseInt(e.target.value) || 15 }))}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white"
+                        />
+                        <span className="text-xs text-zinc-400">mm</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-zinc-800/60 p-2 rounded border border-zinc-700/60">
+                      <label className="text-[10px] text-zinc-400 block">Dolny</label>
+                      <div className="flex items-center gap-1 mt-1">
+                        <input
+                          type="number"
+                          min="10"
+                          max="30"
+                          value={docxConfig.bottomMarginMm}
+                          onChange={(e) => setDocxConfig((prev) => ({ ...prev, bottomMarginMm: parseInt(e.target.value) || 15 }))}
+                          className="w-14 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-white"
+                        />
+                        <span className="text-xs text-zinc-400">mm</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Typografia Word (12 pt, Georgia, Justowanie) */}
+                <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-sky-400" />
+                      Typografia Dokumentu Word (Domyślnie 12 pt)
+                    </label>
+                    <span className="text-[10px] text-sky-400 font-mono">
+                      Rozmiar: {docxConfig.fontSizePt || 12} pt
+                    </span>
+                  </div>
+
+                  {/* Preset Buttons for DOCX */}
+                  <div className="flex gap-2">
+                    {[10, 11, 12, 14].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => setDocxConfig((prev) => ({ ...prev, fontSizePt: size }))}
+                        className={`flex-1 py-1.5 rounded text-xs font-medium border transition cursor-pointer ${
+                          docxConfig.fontSizePt === size
+                            ? 'bg-sky-600 text-white border-sky-500 shadow-sm'
+                            : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                        }`}
+                      >
+                        {size} pt {size === 12 && '(KDP 12pt)'}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 pt-2">
+                    <div>
+                      <label className="text-[11px] text-zinc-400 block mb-1">Czcionka</label>
+                      <select
+                        value={docxConfig.fontFamily}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, fontFamily: e.target.value as any }))}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-white"
+                      >
+                        <option value="georgia">Georgia (Szeryfowa KDP)</option>
+                        <option value="times">Times New Roman</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-zinc-400 block mb-1">Interlinia (Line Spacing)</label>
+                      <select
+                        value={docxConfig.lineSpacing}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, lineSpacing: parseFloat(e.target.value) }))}
+                        className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-1.5 text-xs text-white"
+                      >
+                        <option value={1.15}>1.15 (Zalecana dla A5)</option>
+                        <option value={1.25}>1.25 (Luźniejsza)</option>
+                        <option value={1.0}>1.0 (Pojedyncza)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={docxConfig.runningHeader}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, runningHeader: e.target.checked }))}
+                        className="rounded bg-zinc-800 border-zinc-700 text-sky-600 focus:ring-0"
+                      />
+                      <span>Żywa pagina u góry stron (Running Header z tytułem)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={docxConfig.pageNumbers}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, pageNumbers: e.target.checked }))}
+                        className="rounded bg-zinc-800 border-zinc-700 text-sky-600 focus:ring-0"
+                      />
+                      <span>Numeracja stron w stopce (Page Numbering)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={docxConfig.includeQRCodes}
+                        onChange={(e) => setDocxConfig((prev) => ({ ...prev, includeQRCodes: e.target.checked }))}
+                        className="rounded bg-zinc-800 border-zinc-700 text-sky-600 focus:ring-0"
+                      />
+                      <span>Osadź kody QR w dodatku na końcu publikacji ({qrItems.length})</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Chapter List Preview */}
+                {bookModel && (
+                  <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-zinc-200">Struktura Książki Word DOCX:</span>
+                      <span className="text-zinc-500">{bookModel.chapters.length} rozdziałów (1 Wprowadzenie + 175 Dni)</span>
+                    </div>
+                    <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                      {bookModel.chapters.map((ch, i) => (
+                        <div
+                          key={ch.id}
+                          className="flex items-center justify-between text-xs px-2.5 py-1.5 rounded bg-zinc-800/40 border border-zinc-800/60"
+                        >
+                          <span className="truncate text-zinc-300 max-w-[340px]">
+                            {i + 1}. {ch.title}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 shrink-0">
+                            {ch.paragraphs.length} akap.
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -889,10 +1179,14 @@ eMBiK365`
             <div className="w-full flex items-center justify-between mb-3 text-xs">
               <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-blue-400" />
-                {activeTab === 'kdp-pdf' ? 'Podgląd Strony A5 KDP' : 'Podgląd Czytnika ePUB'}
+                {activeTab === 'kdp-pdf'
+                  ? 'Podgląd Strony A5 KDP'
+                  : activeTab === 'epub'
+                  ? 'Podgląd Czytnika ePUB'
+                  : 'Podgląd Strony Word A5 (DOCX)'}
               </span>
 
-              {activeTab === 'kdp-pdf' && (
+              {(activeTab === 'kdp-pdf' || activeTab === 'docx') && (
                 <div className="flex items-center gap-1 bg-zinc-800 p-0.5 rounded text-[10px]">
                   <button
                     onClick={() => setPreviewParity('odd')}
@@ -1006,7 +1300,7 @@ eMBiK365`
                   )}
                 </div>
               </div>
-            ) : (
+            ) : activeTab === 'epub' ? (
               /* ePUB Reader Frame Preview */
               <div className="relative w-full aspect-[148/210] max-w-[280px] bg-amber-50/90 rounded-2xl shadow-2xl p-4 border border-zinc-700 text-zinc-900 flex flex-col justify-between select-none">
                 <div className="text-center text-[8px] text-zinc-400 font-medium tracking-wide">
@@ -1049,6 +1343,89 @@ eMBiK365`
                   <span>{epubConfig.fontSizePt || 12} pt Justify</span>
                 </div>
               </div>
+            ) : (
+              /* Word DOCX Visual Sheet Preview */
+              <div className="relative w-full aspect-[148/210] max-w-[280px] bg-white rounded shadow-2xl overflow-hidden border border-sky-600/40 select-none text-zinc-900 flex flex-col justify-between">
+                {/* Word Document Brand Top Accent */}
+                <div className="h-1.5 bg-gradient-to-r from-sky-600 to-blue-700 w-full" />
+
+                {/* Gutter Guide Overlay for DOCX */}
+                <div
+                  className={`absolute top-1.5 bottom-0 bg-sky-500/10 border-r border-dashed border-sky-500/40 pointer-events-none z-10 ${
+                    previewParity === 'odd' ? 'left-0' : 'right-0 border-l border-r-0'
+                  }`}
+                  style={{ width: `${(docxConfig.gutterMarginMm / 148) * 100}%` }}
+                >
+                  <div className="text-[7px] text-sky-700 font-bold transform -rotate-90 origin-top-left absolute top-12 left-1">
+                    Grzbiet {docxConfig.gutterMarginMm} mm
+                  </div>
+                </div>
+
+                {/* Printable Content Block */}
+                <div
+                  className="flex-1 flex flex-col justify-between"
+                  style={{
+                    paddingTop: `${(docxConfig.topMarginMm / 210) * 100}%`,
+                    paddingBottom: `${(docxConfig.bottomMarginMm / 210) * 100}%`,
+                    paddingLeft: previewParity === 'odd'
+                      ? `${(docxConfig.gutterMarginMm / 148) * 100}%`
+                      : `${(docxConfig.outerMarginMm / 148) * 100}%`,
+                    paddingRight: previewParity === 'odd'
+                      ? `${(docxConfig.outerMarginMm / 148) * 100}%`
+                      : `${(docxConfig.gutterMarginMm / 148) * 100}%`,
+                  }}
+                >
+                  {/* Running Header */}
+                  {docxConfig.runningHeader && (
+                    <div className="pb-1 mb-2 border-b border-zinc-200 flex items-center justify-between text-[7.5px] text-zinc-500">
+                      <span className="truncate max-w-[140px] italic">
+                        {previewParity === 'odd' ? (bookModel?.chapters[0]?.title || '') : (docxConfig.title || 'Publikacja Amazon KDP')}
+                      </span>
+                      <span className="font-mono text-zinc-400">{previewParity === 'odd' ? 'Recto' : 'Verso'}</span>
+                    </div>
+                  )}
+
+                  {/* Sample Justified Paragraphs in Word */}
+                  <div
+                    className="space-y-1.5 text-justify"
+                    style={{
+                      fontSize: `${Math.max(6, Math.min(14, ((docxConfig.fontSizePt || 12) / 12) * 8))}px`,
+                      lineHeight: '1.35',
+                      fontFamily: docxConfig.fontFamily === 'times' ? 'Times New Roman, serif' : 'Georgia, serif',
+                    }}
+                  >
+                    <div className="font-bold text-zinc-900 mb-1 text-left border-b-2 border-blue-600 pb-0.5" style={{ fontSize: `${Math.max(6.5, Math.min(15, ((docxConfig.fontSizePt || 12) / 12) * 8.5))}px` }}>
+                      {bookModel?.chapters[0]?.title || 'Wprowadzenie'}
+                    </div>
+                    {bookModel?.chapters[0]?.paragraphs?.filter((p) => !p.isHeading).length ? (
+                      bookModel.chapters[0].paragraphs
+                        .filter((p) => !p.isHeading)
+                        .slice(0, 2)
+                        .map((p, idx) => (
+                          <p key={idx} className="text-zinc-800 indent-2 line-clamp-3">
+                            {p.text}
+                          </p>
+                        ))
+                    ) : (
+                      <>
+                        <p className="text-zinc-800 indent-2">
+                          Dokument Word został skonfigurowany w formacie <strong>DIN A5</strong> ze standardową czcionką <strong>{docxConfig.fontSizePt || 12} pt</strong> i pełnym wyjustowaniem.
+                        </p>
+                        <p className="text-zinc-800 indent-2">
+                          Po otwarciu w programie Word zapisanie jako PDF da identyczny, poprawnie sformatowany plik dla Amazon KDP.
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Running Footer Page Number */}
+                  {docxConfig.pageNumbers && (
+                    <div className="pt-2 text-[8px] font-medium text-zinc-600 text-center">
+                      {previewParity === 'odd' ? '3' : '2'}
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
 
             <div className="mt-4 text-center text-[11px] text-zinc-400">
@@ -1057,9 +1434,13 @@ eMBiK365`
                   Amazon KDP Paperback: <strong>DIN A5 (148 × 210 mm)</strong>
                   {kdpConfig.bleed === 'kdp-standard' && ' + Spad 3.2 mm'}
                 </span>
-              ) : (
+              ) : activeTab === 'epub' ? (
                 <span>
                   Standard: <strong>IDPF EPUB 3.0</strong> (Kindle KDP / E-readers)
+                </span>
+              ) : (
+                <span>
+                  Microsoft Word: <strong>DIN A5 (148 × 210 mm)</strong> | Gotowy do zapisu jako PDF KDP
                 </span>
               )}
             </div>
@@ -1130,7 +1511,7 @@ eMBiK365`
                 <Download className="w-4 h-4" />
                 <span>Generuj i Pobierz KDP PDF (A5 12pt)</span>
               </button>
-            ) : (
+            ) : activeTab === 'epub' ? (
               <button
                 onClick={handleExportEpub}
                 disabled={isExporting || isExtracting}
@@ -1138,6 +1519,15 @@ eMBiK365`
               >
                 <Download className="w-4 h-4" />
                 <span>Generuj i Pobierz eBook (ePUB 12pt)</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleExportDocx}
+                disabled={isExporting || isExtracting}
+                className="flex-1 sm:flex-none px-5 py-2 text-xs font-semibold text-white bg-sky-600 hover:bg-sky-500 rounded-lg shadow-lg shadow-sky-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Generuj i Pobierz KDP Word (DOCX A5 12pt)</span>
               </button>
             )}
           </div>

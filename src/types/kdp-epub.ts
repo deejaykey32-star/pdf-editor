@@ -36,6 +36,24 @@ export interface EpubConfig {
   excludedPatterns?: string[]; // phrases/headers to strip from output
 }
 
+export interface DocxConfig {
+  title: string;
+  author: string;
+  gutterMarginMm: number; // default 18 mm
+  outerMarginMm: number; // default 13 mm
+  topMarginMm: number; // default 15 mm
+  bottomMarginMm: number; // default 15 mm
+  fontSizePt: number; // default 12 pt
+  lineSpacing: number; // default 1.15
+  fontFamily: 'georgia' | 'times'; // default georgia
+  firstLineIndentMm: number; // default 5 mm
+  runningHeader: boolean;
+  pageNumbers: boolean;
+  mirrorMargins: boolean;
+  includeQRCodes: boolean;
+  excludedPatterns?: string[];
+}
+
 export interface ExtractedParagraph {
   text: string;
   isHeading: boolean;
