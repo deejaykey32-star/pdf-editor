@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { EpubConfig, ExtractedBookModel } from '@/types/kdp-epub';
 import { QRCodeItem } from '@/types/pdf';
 import { generateQRPngBytes, resolvePageContent } from './qr-generator';
+import { sanitizeExtractedText } from './pdf-text-extractor';
 
 function escapeXml(str: string): string {
   return str
@@ -14,8 +15,8 @@ function escapeXml(str: string): string {
 
 /**
  * Generates an official, standard-compliant EPUB 3.0 file package
- * with 12pt base typography, full text justification, navigation TOC,
- * and aesthetic reader styling for Amazon KDP eBooks and e-readers.
+ * with strictly 12pt typography for all text and headings, full text justification,
+ * navigation TOC, and zero overflow beyond reader margins.
  */
 export async function generateEpubPackage({
   config,
@@ -42,13 +43,20 @@ export async function generateEpubPackage({
 </container>`;
   zip.file('META-INF/container.xml', containerXml);
 
-  // 3. OEBPS/styles/stylesheet.css
-  const stylesheetCss = `/* Standard EPUB 3 Stylesheet - 12pt Justified Layout for Amazon KDP */
+  // 3. OEBPS/styles/stylesheet.css (Strictly 12pt for body and all headings, no margin overflow)
+  const stylesheetCss = `/* Standard EPUB 3 Stylesheet - Strictly 12pt Justified Layout for Amazon KDP eBook */
 @charset "UTF-8";
+
+* {
+  box-sizing: border-box;
+  max-width: 100%;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
 
 body {
   font-family: "Georgia", "Times New Roman", "Cambria", serif;
-  font-size: ${config.fontSizePt || 12}pt;
+  font-size: 12pt !important;
   line-height: 1.5;
   text-align: justify;
   text-justify: inter-word;
@@ -61,19 +69,23 @@ body {
   background-color: transparent;
 }
 
+h1, h2, h3, h4, h5, h6,
+h1.book-title, h1.chapter-title {
+  font-size: 12pt !important;
+  font-weight: bold;
+  line-height: 1.4;
+}
+
 h1.book-title {
   text-align: center;
-  font-size: 2.2em;
-  font-weight: bold;
   margin-top: 25%;
-  margin-bottom: 0.3em;
-  line-height: 1.2;
+  margin-bottom: 0.5em;
   page-break-before: always;
 }
 
 p.book-author {
   text-align: center;
-  font-size: 1.2em;
+  font-size: 12pt !important;
   color: #555;
   margin-bottom: 2em;
 }
@@ -86,32 +98,32 @@ p.book-author {
 }
 
 h1.chapter-title {
-  font-size: 1.6em;
-  font-weight: bold;
   text-align: left;
-  margin-top: 2em;
-  margin-bottom: 1em;
-  line-height: 1.3;
+  margin-top: 1.5em;
+  margin-bottom: 0.8em;
   page-break-before: always;
   color: #111;
-  border-bottom: 2px solid #2563eb;
-  padding-bottom: 0.3em;
+  border-bottom: 1.5px solid #2563eb;
+  padding-bottom: 0.2em;
 }
 
 h2 {
-  font-size: 1.25em;
-  margin-top: 1.5em;
-  margin-bottom: 0.8em;
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
   text-align: left;
 }
 
-p {
+p, div, span, section {
+  font-size: 12pt !important;
   text-align: justify;
   text-justify: inter-word;
+  line-height: 1.5;
+}
+
+p {
   text-indent: ${config.indentParagraphs !== false ? '1.25em' : '0'};
   margin-top: 0;
   margin-bottom: 0.4em;
-  line-height: 1.5;
 }
 
 p.first, h1 + p, h2 + p {
@@ -120,8 +132,8 @@ p.first, h1 + p, h2 + p {
 
 .qr-section {
   text-align: center;
-  margin: 2.5em auto;
-  padding: 1.2em;
+  margin: 2em auto;
+  padding: 1em;
   border: 1px dashed #ccc;
   border-radius: 8px;
   background-color: #fafafa;
@@ -136,14 +148,14 @@ p.first, h1 + p, h2 + p {
 }
 
 .qr-label {
-  font-size: 0.9em;
+  font-size: 11pt !important;
   font-weight: bold;
   color: #333;
   margin-bottom: 0.4em;
 }
 
 .qr-link {
-  font-size: 0.8em;
+  font-size: 10pt !important;
   color: #2563eb;
   word-break: break-all;
   text-decoration: underline;
@@ -152,21 +164,28 @@ p.first, h1 + p, h2 + p {
 nav#toc ol {
   list-style-type: decimal;
   padding-left: 1.5em;
+  font-size: 12pt !important;
 }
 
 nav#toc li {
   margin-bottom: 0.6em;
+  font-size: 12pt !important;
 }
 
 nav#toc a {
   text-decoration: none;
   color: #2563eb;
+  font-size: 12pt !important;
 }
 `;
   zip.file('OEBPS/styles/stylesheet.css', stylesheetCss);
 
-  const bookTitle = config.title || bookModel.title || 'Dokument A5';
-  const author = config.author || bookModel.author || 'Autor';
+  const rawBookTitle = config.title || bookModel.title || 'Dokument A5';
+  const bookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns) || 'Dokument A5';
+
+  const rawAuthor = config.author || bookModel.author || 'Autor';
+  const author = sanitizeExtractedText(rawAuthor, config.excludedPatterns) || 'Autor';
+
   const lang = config.language || 'pl';
   const bookUuid = config.identifier || `urn:uuid:${Math.random().toString(36).substring(2)}-${Date.now()}`;
   const nowIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
@@ -184,7 +203,7 @@ nav#toc a {
     <h1 class="book-title">${escapeXml(bookTitle)}</h1>
     <p class="book-author">${escapeXml(author)}</p>
     <hr class="title-separator" />
-    <p style="text-align: center; font-size: 0.85em; color: #777;">Wydanie cyfrowe ePUB (Gotowe dla Amazon KDP eBook)</p>
+    <p style="text-align: center; font-size: 11pt; color: #777;">Wydanie cyfrowe ePUB (Format 12 pt | Amazon KDP eBook)</p>
   </section>
 </body>
 </html>`;
@@ -212,27 +231,37 @@ nav#toc a {
     }
   }
 
-  // 6. Generate Chapters
+  // 6. Generate Chapters (filtering out noise/headers)
   const chapterFiles: { id: string; title: string; filename: string }[] = [];
 
   for (let idx = 0; idx < bookModel.chapters.length; idx++) {
     const chapter = bookModel.chapters[idx];
-    const filename = `chapter_${String(idx + 1).padStart(3, '0')}.xhtml`;
-    const chapterId = `ch_${idx + 1}`;
-    chapterFiles.push({ id: chapterId, title: chapter.title, filename });
+    const cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
+    if (!cleanChapterTitle) continue;
+
+    const filename = `chapter_${String(chapterFiles.length + 1).padStart(3, '0')}.xhtml`;
+    const chapterId = `ch_${chapterFiles.length + 1}`;
+    chapterFiles.push({ id: chapterId, title: cleanChapterTitle, filename });
 
     let paragraphsHtml = '';
+    let renderedParasCount = 0;
+
     for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
       const p = chapter.paragraphs[pIdx];
-      if (pIdx === 0 && p.isHeading && p.text === chapter.title) {
+      const cleanParaText = sanitizeExtractedText(p.text, config.excludedPatterns);
+      if (!cleanParaText || cleanParaText.length <= 1) continue;
+
+      if (renderedParasCount === 0 && p.isHeading && cleanParaText === cleanChapterTitle) {
         continue;
       }
-      const pClass = pIdx === 0 ? 'class="first"' : '';
+
+      const pClass = renderedParasCount === 0 ? 'class="first"' : '';
       if (p.isHeading) {
-        paragraphsHtml += `    <h2>${escapeXml(p.text)}</h2>\n`;
+        paragraphsHtml += `    <h2>${escapeXml(cleanParaText)}</h2>\n`;
       } else {
-        paragraphsHtml += `    <p ${pClass}>${escapeXml(p.text)}</p>\n`;
+        paragraphsHtml += `    <p ${pClass}>${escapeXml(cleanParaText)}</p>\n`;
       }
+      renderedParasCount++;
     }
 
     // Add QR section to last chapter if present
@@ -252,12 +281,12 @@ nav#toc a {
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}">
 <head>
-  <title>${escapeXml(chapter.title)}</title>
+  <title>${escapeXml(cleanChapterTitle)}</title>
   <link rel="stylesheet" type="text/css" href="../styles/stylesheet.css" />
 </head>
 <body epub:type="bodymatter chapter">
   <section>
-    <h1 class="chapter-title">${escapeXml(chapter.title)}</h1>
+    <h1 class="chapter-title">${escapeXml(cleanChapterTitle)}</h1>
 ${paragraphsHtml}
   </section>
 </body>

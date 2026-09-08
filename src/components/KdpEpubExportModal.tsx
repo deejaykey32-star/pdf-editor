@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   X,
   BookOpen,
@@ -16,6 +16,9 @@ import {
   AlignJustify,
   Maximize2,
   Info,
+  Filter,
+  RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 import { KdpPrintConfig, EpubConfig, ExtractedBookModel } from '@/types/kdp-epub';
 import { QRCodeItem, PdfDocumentInfo } from '@/types/pdf';
@@ -39,6 +42,18 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   qrItems,
 }) => {
   const [activeTab, setActiveTab] = useState<'kdp-pdf' | 'epub'>('kdp-pdf');
+
+  // Exclusion filter text (lines to strip from extracted text)
+  const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
+    'eMBiK365 — widokinaraj.pl str. 1-797\nRóżaniec Historii Zbawienia — RHZ365\nwidokinaraj.pl\nRHZ365'
+  );
+
+  const excludedPatternsList = useMemo(() => {
+    return excludedPhrasesText
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [excludedPhrasesText]);
 
   // KDP Print Configuration
   const [kdpConfig, setKdpConfig] = useState<KdpPrintConfig>({
@@ -86,33 +101,43 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   // Preview Page Parity (odd / even toggle in preview)
   const [previewParity, setPreviewParity] = useState<'odd' | 'even'>('odd');
 
+  const runExtraction = useCallback(
+    async (patternsToExclude: string[]) => {
+      if (!pdfDocProxy && !documentInfo?.data) return;
+      setIsExtracting(true);
+      try {
+        const source = pdfDocProxy || documentInfo?.data;
+        const model = await extractBookContentFromPdf(source, {
+          fallbackTitle: documentInfo?.name || 'Dokument A5',
+          customExcludedPatterns: patternsToExclude,
+        });
+
+        setBookModel(model);
+        setKdpConfig((prev) => ({
+          ...prev,
+          bookTitle: model.title || prev.bookTitle,
+          author: model.author || prev.author,
+        }));
+        setEpubConfig((prev) => ({
+          ...prev,
+          title: model.title || prev.title,
+          author: model.author || prev.author,
+        }));
+      } catch (err) {
+        console.error('Extraction error:', err);
+      } finally {
+        setIsExtracting(false);
+      }
+    },
+    [pdfDocProxy, documentInfo]
+  );
+
   // Auto-extract content when modal opens
   useEffect(() => {
     if (isOpen && (pdfDocProxy || documentInfo?.data)) {
-      setIsExtracting(true);
-      const source = pdfDocProxy || documentInfo?.data;
-      extractBookContentFromPdf(source, documentInfo?.name || 'Dokument A5')
-        .then((model) => {
-          setBookModel(model);
-          setKdpConfig((prev) => ({
-            ...prev,
-            bookTitle: model.title || prev.bookTitle,
-            author: model.author || prev.author,
-          }));
-          setEpubConfig((prev) => ({
-            ...prev,
-            title: model.title || prev.title,
-            author: model.author || prev.author,
-          }));
-        })
-        .catch((err) => {
-          console.error('Extraction error:', err);
-        })
-        .finally(() => {
-          setIsExtracting(false);
-        });
+      runExtraction(excludedPatternsList);
     }
-  }, [isOpen, pdfDocProxy, documentInfo]);
+  }, [isOpen, pdfDocProxy, documentInfo, runExtraction, excludedPatternsList]);
 
   if (!isOpen) return null;
 
@@ -120,11 +145,15 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   const handleExportKdpPdf = async () => {
     if (!bookModel && kdpConfig.mode === 'typeset') return;
     setIsExporting(true);
-    setExportProgress({ current: 0, total: 100, stage: 'Inicjalizacja składu typograficznego KDP...' });
+    setExportProgress({ current: 0, total: 100, stage: 'Inicjalizacja składu typograficznego KDP (format 12 pt)...' });
 
     try {
       const pdfBytes = await generateKdpA5PrintPdf({
-        config: kdpConfig,
+        config: {
+          ...kdpConfig,
+          fontSizePt: 12, // Strictly 12 pt
+          excludedPatterns: excludedPatternsList,
+        },
         bookModel: bookModel || {
           title: kdpConfig.bookTitle,
           author: kdpConfig.author,
@@ -165,11 +194,15 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   const handleExportEpub = async () => {
     if (!bookModel) return;
     setIsExporting(true);
-    setExportProgress({ current: 0, total: 100, stage: 'Generowanie pakietu ePUB 3.0...' });
+    setExportProgress({ current: 0, total: 100, stage: 'Generowanie pakietu ePUB 3.0 (format 12 pt)...' });
 
     try {
       const epubBytes = await generateEpubPackage({
-        config: epubConfig,
+        config: {
+          ...epubConfig,
+          fontSizePt: 12, // Strictly 12 pt
+          excludedPatterns: excludedPatternsList,
+        },
         bookModel,
         qrItems,
         onProgress: (cur, tot) => {
@@ -214,11 +247,11 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                   Studio Publikacji Amazon KDP & eBook
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full">
-                  Format A5 & 12 pt
+                  Format A5 & Wszystkie Czcionki 12 pt
                 </span>
               </div>
               <p className="text-xs text-zinc-400">
-                Eksport z zachowaniem spadów i marginesów introligatorskich, justowaniem 12 pt i architekturą gotową do druku.
+                Ścisłe zachowanie marginesów i spadów (brak wychodzenia poza stronę), wycinanie niepożądanych stopek i pełne wyjustowanie.
               </p>
             </div>
           </div>
@@ -272,6 +305,49 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Left Column: Settings Panel (7 cols) */}
           <div className="lg:col-span-7 space-y-5">
+            {/* Common Filter Box: Wycinanie niepożądanych fragmentów */}
+            <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-red-300 flex items-center gap-1.5">
+                  <Filter className="w-3.5 h-3.5 text-red-400" />
+                  Usuwane Fragmenty, Nagłówki i Stopki ze Źródła
+                </label>
+                <button
+                  type="button"
+                  onClick={() => runExtraction(excludedPatternsList)}
+                  disabled={isExtracting}
+                  className="text-[10px] text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 px-2 py-0.5 rounded border border-zinc-700 flex items-center gap-1 transition"
+                  title="Przelicz i zastosuj filtry do tekstu"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isExtracting ? 'animate-spin' : ''}`} />
+                  <span>Zastosuj filtry</span>
+                </button>
+              </div>
+
+              <p className="text-[11px] text-zinc-400">
+                Poniższe frazy są automatycznie usuwane z tekstu książki (np. stopki eMBiK365, widokinaraj.pl, RHZ365, numery stron):
+              </p>
+
+              <textarea
+                rows={3}
+                value={excludedPhrasesText}
+                onChange={(e) => setExcludedPhrasesText(e.target.value)}
+                placeholder="Wpisz frazy do usunięcia (każda w nowej linii)..."
+                className="w-full bg-zinc-900 border border-zinc-800 rounded p-2 text-xs text-zinc-200 font-mono resize-none focus:outline-none focus:border-red-500/50"
+              />
+
+              <div className="flex flex-wrap gap-1.5">
+                {excludedPatternsList.map((phrase, idx) => (
+                  <span
+                    key={idx}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-[10px] text-red-300 font-mono"
+                  >
+                    {phrase}
+                  </span>
+                ))}
+              </div>
+            </div>
+
             {activeTab === 'kdp-pdf' ? (
               /* TAB 1: KDP PRINT PDF SETTINGS */
               <>
@@ -320,7 +396,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                         {kdpConfig.bleed === 'none' && <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />}
                       </div>
                       <p className="text-[10px] text-zinc-400 mt-1">
-                        Dla publikacji czysto tekstowych (dokładny format DIN A5 148 × 210 mm).
+                        Dla publikacji tekstowych (dokładny format DIN A5 148 × 210 mm).
                       </p>
                     </button>
                   </div>
@@ -409,29 +485,30 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                   </div>
                 </div>
 
-                {/* 3. Typografia & Formatowanie tekstu (12 pt, Obustronne Justowanie) */}
+                {/* 3. Typografia & Formatowanie tekstu (Wszystkie czcionki 12 pt, Obustronne Justowanie) */}
                 <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
                       <AlignJustify className="w-3.5 h-3.5 text-emerald-400" />
-                      Formatowanie Typograficzne & Justowanie
+                      Typografia: Wszystkie Czcionki 12 pt & Ochrona Marginesów
                     </label>
-                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 font-semibold">
-                      Czcionka 12 pt | Obustronne Justowanie
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 font-semibold flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                      12 pt Bez Wychodzenia poza Marginesy
                     </span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Wielkość czcionki:</div>
-                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">12 pt (Wymóg Standardu)</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Optymalna czytelność formatu A5</div>
+                      <div className="text-zinc-400 text-[11px]">Tekst i Nagłówki:</div>
+                      <div className="font-semibold text-emerald-400 text-sm mt-0.5">Ściśle 12 pt</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Nagłówki 12 pt Bold | Treść 12 pt Regular</div>
                     </div>
 
                     <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Justowanie:</div>
-                      <div className="font-semibold text-emerald-400 text-sm mt-0.5">Lewa i Prawa Krawędź</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Równomierne rozłożenie spacji</div>
+                      <div className="text-zinc-400 text-[11px]">Granice Kolumny:</div>
+                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">100% Ochrona Marginesów</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Dzielenie słów i blokada overflow</div>
                     </div>
                   </div>
 
@@ -443,7 +520,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                         onChange={(e) => setKdpConfig((prev) => ({ ...prev, runningHeader: e.target.checked }))}
                         className="rounded bg-zinc-800 border-zinc-700 text-blue-600 focus:ring-0"
                       />
-                      <span>Żywa pagina (nagłówek tytułu i rozdziału na górze stron)</span>
+                      <span>Żywa pagina (nagłówek na górze stron, zabezpieczony przed wyjściem za margines)</span>
                     </label>
 
                     <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
@@ -485,7 +562,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                     >
                       <div className="font-semibold text-zinc-200">1. Skład Typograficzny (Zalecany)</div>
                       <div className="text-[10px] text-zinc-400 mt-1">
-                        Układa tekst źródłowy w nowy, książkowy szablon A5 z czcionką 12 pt, nagłówkami i pełnym justowaniem.
+                        Układa tekst źródłowy w nowy szablon A5 ze wszystkimi czcionkami i nagłówkami 12 pt, wyjustowaniem i oczyszczeniem ze stopek.
                       </div>
                     </button>
 
@@ -563,19 +640,19 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
 
                 <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
                   <label className="text-xs font-semibold text-zinc-200 block">
-                    Typografia Czytnika Cyfrowego
+                    Typografia Czytnika Cyfrowego (Ściśle 12 pt)
                   </label>
 
                   <div className="grid grid-cols-2 gap-3 text-xs">
                     <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Czcionka bazowa:</div>
-                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">12 pt (1em)</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Skalowalna czcionka szeryfowa</div>
+                      <div className="text-zinc-400 text-[11px]">Wszystkie Czcionki i Nagłówki:</div>
+                      <div className="font-semibold text-indigo-400 text-sm mt-0.5">12 pt (1em)</div>
+                      <div className="text-[10px] text-zinc-500 mt-0.5">Jednolity format 12pt dla całej treści</div>
                     </div>
 
                     <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
                       <div className="text-zinc-400 text-[11px]">Wyrównanie CSS:</div>
-                      <div className="font-semibold text-indigo-400 text-sm mt-0.5">text-align: justify</div>
+                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">text-align: justify</div>
                       <div className="text-[10px] text-zinc-500 mt-0.5">Wraz z automatycznym dzieleniem wyrazów</div>
                     </div>
                   </div>
@@ -712,21 +789,23 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                   {/* Running Header */}
                   {kdpConfig.runningHeader && (
                     <div className="pb-1 mb-2 border-b border-zinc-300 flex items-center justify-between text-[7.5px] text-zinc-500">
-                      <span>{previewParity === 'odd' ? 'Rozdział 1: Wprowadzenie' : kdpConfig.bookTitle}</span>
+                      <span className="truncate max-w-[140px]">
+                        {previewParity === 'odd' ? (bookModel?.chapters[0]?.title || 'Rozdział 1') : kdpConfig.bookTitle}
+                      </span>
                       <span className="font-mono">A5 Druk KDP</span>
                     </div>
                   )}
 
                   {/* Sample 12pt Justified Paragraphs */}
                   <div className="space-y-1.5 text-justify" style={{ fontSize: '8px', lineHeight: '1.3' }}>
-                    <div className="font-bold text-[9px] text-zinc-900 mb-1 text-left">
+                    <div className="font-bold text-[8.5px] text-zinc-900 mb-1 text-left">
                       Rozdział 1. Specyfikacja Drukarska
                     </div>
                     <p className="text-zinc-800 indent-2">
-                      Formatowanie zostało przygotowane ściśle według wymogów <strong>Amazon KDP A5</strong>. Czcionka o wielkości <strong>12 pt</strong> wraz z matematycznym wyjustowaniem obu krawędzi tworzy estetyczny i harmonijny układ kolumny tekstu.
+                      Wszystkie czcionki w tym nagłówki są w formacie <strong>12 pt</strong>. Układ kolumny tekstu posiada matematyczną ochronę marginesów zapobiegającą jakiemukolwiek wychodzeniu wyrazów poza krawędzie strony.
                     </p>
                     <p className="text-zinc-800 indent-2">
-                      Margines grzbietowy ({kdpConfig.gutterMarginMm} mm) zabezpiecza tekst przed wciągnięciem w oprawę introligatorską, a spady chronią dokument przed powstawaniem białych krawędzi podczas gilotynowania.
+                      Niepożądane fragmenty stopek i nagłówków zostały automatycznie wycięte z dokumentu źródłowego.
                     </p>
                   </div>
 
@@ -750,20 +829,20 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                 </div>
 
                 <div className="my-auto space-y-2 text-justify" style={{ fontSize: '8.5px', lineHeight: '1.4' }}>
-                  <h2 className="font-bold text-[11px] text-center text-zinc-900 mb-1.5 pb-1 border-b border-zinc-300">
-                    Rozdział I. Wydanie Cyfrowe
+                  <h2 className="font-bold text-[9px] text-center text-zinc-900 mb-1.5 pb-1 border-b border-zinc-300">
+                    Rozdział I. Wydanie Cyfrowe (12 pt)
                   </h2>
                   <p className="indent-2 text-zinc-800">
-                    Treść została sformatowana z zachowaniem pełnego wyjustowania do prawej i lewej strony oraz wielkości bazowej 12 pt.
+                    Treść oraz nagłówki zostały sformatowane w formacie 12 pt z pełnym wyjustowaniem i wycięciem powtarzających się stopek.
                   </p>
                   <p className="indent-2 text-zinc-800">
-                    Dzięki standardowi ePUB 3.0 tekst płynnie dopasowuje się do ekranów czytników Kindle, tabletów i smartfonów, zachowując spis treści i podział na rozdziały.
+                    Tekst dopasowuje się do ekranu bez wychodzenia poza marginesy czytnika Kindle i iPad.
                   </p>
                 </div>
 
                 <div className="flex justify-between items-center text-[7.5px] text-zinc-400 pt-2 border-t border-zinc-200">
                   <span>Rozdział 1 z {bookModel?.chapters.length || 1}</span>
-                  <span>12 pt Justify</span>
+                  <span>Ściśle 12 pt Justify</span>
                 </div>
               </div>
             )}
@@ -788,7 +867,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
           <div className="text-xs text-zinc-400 flex items-center gap-2">
             {isExtracting ? (
               <span className="flex items-center gap-2 text-amber-400 animate-pulse">
-                <Sparkles className="w-4 h-4" /> Ekstrakcja struktury tekstu z PDF...
+                <Sparkles className="w-4 h-4" /> Filtrowanie tekstu i ekstrakcja struktury PDF...
               </span>
             ) : isExporting ? (
               <span className="flex items-center gap-2 text-blue-400 font-medium">
@@ -796,8 +875,8 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                 {exportProgress.stage || 'Przetwarzanie dokumentu...'}
               </span>
             ) : (
-              <span className="text-zinc-500 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Gotowy do wygenerowania formatów wydawniczych
+              <span className="text-zinc-400 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Wszystkie czcionki: 12 pt | Filtry tekstu aktywne
               </span>
             )}
           </div>
@@ -818,7 +897,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                 className="flex-1 sm:flex-none px-5 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-lg shadow-blue-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span>Generuj i Pobierz KDP PDF (A5)</span>
+                <span>Generuj i Pobierz KDP PDF (A5 12pt)</span>
               </button>
             ) : (
               <button
@@ -827,7 +906,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                 className="flex-1 sm:flex-none px-5 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-lg shadow-indigo-600/30 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span>Generuj i Pobierz eBook (ePUB)</span>
+                <span>Generuj i Pobierz eBook (ePUB 12pt)</span>
               </button>
             )}
           </div>

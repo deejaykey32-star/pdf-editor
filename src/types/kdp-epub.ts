@@ -18,6 +18,7 @@ export interface KdpPrintConfig {
   firstLineIndentMm: number; // default 5 mm
   mode: 'typeset' | 'impose-pages'; // reflow extracted text into book vs impose existing PDF pages
   includeQRCodes: boolean;
+  excludedPatterns?: string[]; // phrases/headers to strip from output
 }
 
 export interface EpubConfig {
@@ -32,6 +33,7 @@ export interface EpubConfig {
   indentParagraphs: boolean;
   includeQRCodes: boolean;
   coverTitle?: string;
+  excludedPatterns?: string[]; // phrases/headers to strip from output
 }
 
 export interface ExtractedParagraph {

@@ -4,6 +4,7 @@ import { KdpPrintConfig, ExtractedBookModel, ExtractedChapter, ExtractedParagrap
 import { mmToPt } from './coordinates';
 import { QRCodeItem } from '@/types/pdf';
 import { generateQRPngBytes, resolvePageContent } from './qr-generator';
+import { sanitizeExtractedText } from './pdf-text-extractor';
 
 export interface GenerateKdpPdfOptions {
   config: KdpPrintConfig;
@@ -66,7 +67,58 @@ function sanitizeForStandardFont(text: string): string {
 }
 
 /**
- * Line breaking and high-precision full two-sided justification engine.
+ * Splits extra-long tokens/words (e.g. URLs or long words) with a hyphen
+ * so that no single token can ever overflow past the right margin.
+ */
+function splitLongWord(
+  word: string,
+  font: PDFFont,
+  fontSize: number,
+  maxWidth: number
+): string[] {
+  let wordWidth: number;
+  try {
+    wordWidth = font.widthOfTextAtSize(word, fontSize);
+  } catch {
+    wordWidth = font.widthOfTextAtSize(sanitizeForStandardFont(word), fontSize);
+  }
+
+  if (wordWidth <= maxWidth || word.length <= 4) {
+    return [word];
+  }
+
+  const chunks: string[] = [];
+  let currentChunk = '';
+  const hyphenWidth = font.widthOfTextAtSize('-', fontSize);
+
+  for (let i = 0; i < word.length; i++) {
+    const char = word[i];
+    const candidate = currentChunk + char;
+    let candidateWidth: number;
+    try {
+      candidateWidth = font.widthOfTextAtSize(candidate, fontSize) + hyphenWidth;
+    } catch {
+      candidateWidth = font.widthOfTextAtSize(sanitizeForStandardFont(candidate), fontSize) + hyphenWidth;
+    }
+
+    if (candidateWidth <= maxWidth || currentChunk.length === 0) {
+      currentChunk += char;
+    } else {
+      chunks.push(currentChunk + '-');
+      currentChunk = char;
+    }
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+/**
+ * Line breaking and high-precision full two-sided justification engine,
+ * guaranteed to stay strictly within [0, columnWidth].
  */
 interface JustifiedLine {
   words: string[];
@@ -83,8 +135,16 @@ function breakParagraphIntoJustifiedLines(
   columnWidth: number,
   firstLineIndentPt: number
 ): JustifiedLine[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
+  const rawWords = text.split(/\s+/).filter(Boolean);
+  if (rawWords.length === 0) return [];
+
+  // Break any token that exceeds available width so nothing ever overflows the margin
+  const maxTokenWidth = Math.max(30, columnWidth - firstLineIndentPt);
+  const words: string[] = [];
+  for (const rw of rawWords) {
+    const parts = splitLongWord(rw, font, fontSize, maxTokenWidth);
+    words.push(...parts);
+  }
 
   const spaceWidth = font.widthOfTextAtSize(' ', fontSize);
   const lines: JustifiedLine[] = [];
@@ -144,7 +204,8 @@ function breakParagraphIntoJustifiedLines(
 
 /**
  * Generates an Amazon KDP Print-Ready PDF adhering to A5 specs,
- * bleed, alternating gutter margins, 12pt justified typography, and headers/footers.
+ * bleed, alternating gutter margins, strictly 12pt typography for all text/headings,
+ * with zero overflow beyond page boundaries or margins.
  */
 export async function generateKdpA5PrintPdf({
   config,
@@ -159,7 +220,6 @@ export async function generateKdpA5PrintPdf({
   // Load custom serif font (Georgia) or fallback
   let regularFont: PDFFont;
   let boldFont: PDFFont;
-  let isCustomFont = false;
 
   const georgiaBytes = await loadFontBytes('/fonts/georgia.ttf');
   const georgiaBoldBytes = await loadFontBytes('/fonts/georgiab.ttf');
@@ -168,7 +228,6 @@ export async function generateKdpA5PrintPdf({
     try {
       regularFont = await pdfDoc.embedFont(georgiaBytes);
       boldFont = await pdfDoc.embedFont(georgiaBoldBytes);
-      isCustomFont = true;
     } catch (e) {
       console.warn('Failed to embed Georgia font, falling back to Times Roman:', e);
       regularFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
@@ -191,8 +250,7 @@ export async function generateKdpA5PrintPdf({
   const hasBleed = config.bleed === 'kdp-standard';
   const bleedPt = hasBleed ? mmToPt(config.bleedMm) : 0;
 
-  // With standard KDP bleed: width adds 3.2mm on outside, height adds 6.4mm (3.2mm top + 3.2mm bottom)
-  // For standard full page bleed calculation: 154.4 x 216.4 mm
+  // With standard KDP bleed: 154.4 x 216.4 mm
   const pageWidthMm = hasBleed ? A5_WIDTH_MM + 2 * config.bleedMm : A5_WIDTH_MM;
   const pageHeightMm = hasBleed ? A5_HEIGHT_MM + 2 * config.bleedMm : A5_HEIGHT_MM;
   const pageWidthPt = mmToPt(pageWidthMm);
@@ -205,8 +263,9 @@ export async function generateKdpA5PrintPdf({
   const columnWidthPt = A5_WIDTH_PT - gutterPt - outerPt;
   const columnHeightPt = A5_HEIGHT_PT - topPt - bottomPt;
 
-  const fontSizePt = config.fontSizePt || 12;
-  const lineHeightPt = config.lineHeightPt || 16;
+  // Strict 12pt formatting across all text & headings
+  const FONT_SIZE_12PT = 12;
+  const LINE_HEIGHT_16PT = 16;
   const firstLineIndentPt = mmToPt(config.firstLineIndentMm || 5);
 
   // ----------------------------------------------------
@@ -230,7 +289,7 @@ export async function generateKdpA5PrintPdf({
       const origW = origPages[i].getWidth();
       const origH = origPages[i].getHeight();
 
-      // Calculate scale to fit comfortably in KDP column area
+      // Scale to fit comfortably inside the safe margin box
       const scaleX = columnWidthPt / origW;
       const scaleY = columnHeightPt / origH;
       const fitScale = Math.min(scaleX, scaleY, 1.0);
@@ -238,8 +297,6 @@ export async function generateKdpA5PrintPdf({
       const placedW = origW * fitScale;
       const placedH = origH * fitScale;
 
-      // Odd: Gutter is LEFT, Outer is RIGHT
-      // Even: Gutter is RIGHT, Outer is LEFT
       const leftMargin = bleedPt + (isOdd ? gutterPt : outerPt);
       const drawX = leftMargin + (columnWidthPt - placedW) / 2;
       const drawY = bottomPt + (columnHeightPt - placedH) / 2;
@@ -274,7 +331,7 @@ export async function generateKdpA5PrintPdf({
   }
 
   // ----------------------------------------------------
-  // BRANCH 2: Reflow Book Typesetting Mode (12pt Justified)
+  // BRANCH 2: Reflow Book Typesetting Mode (Strict 12pt Justified)
   // ----------------------------------------------------
   let currentPageNumber = 1;
   let currentPage: import('pdf-lib').PDFPage | null = null;
@@ -296,15 +353,27 @@ export async function generateKdpA5PrintPdf({
     // Running Header (omit on chapter start page or title page)
     if (config.runningHeader && !isChapterStartPage && currentPageNumber > 1) {
       const headerY = pageHeightPt - topPt + 14;
-      const headerText = isOdd ? activeChapterTitle : config.bookTitle || bookModel.title;
-      const headerSize = 8.5;
-      const textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(headerText), headerSize);
+      let rawHeaderText = isOdd ? activeChapterTitle : (config.bookTitle || bookModel.title);
+      let cleanHeaderText = sanitizeExtractedText(rawHeaderText, config.excludedPatterns);
+
+      const headerSize = 9;
+      const maxHeaderW = columnWidthPt * 0.72;
+      let textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText), headerSize);
+
+      // Truncate if header would exceed safe area
+      if (textW > maxHeaderW) {
+        while (cleanHeaderText.length > 3 && textW > maxHeaderW) {
+          cleanHeaderText = cleanHeaderText.slice(0, -1);
+          textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(cleanHeaderText + '...'), headerSize);
+        }
+        cleanHeaderText += '...';
+      }
 
       const headerX = isOdd
         ? pageWidthPt - bleedPt - outerPt - textW
         : bleedPt + outerPt;
 
-      safeDrawText(currentPage, headerText, {
+      safeDrawText(currentPage, cleanHeaderText, {
         x: headerX,
         y: headerY,
         size: headerSize,
@@ -330,8 +399,6 @@ export async function generateKdpA5PrintPdf({
       const numWidth = regularFont.widthOfTextAtSize(pageNumStr, numSize);
       const footerY = bottomPt - 20;
 
-      // Recto (odd): number on right outer edge
-      // Verso (even): number on left outer edge
       const numX = isOdd
         ? pageWidthPt - bleedPt - outerPt - numWidth
         : bleedPt + outerPt;
@@ -349,50 +416,71 @@ export async function generateKdpA5PrintPdf({
     isChapterStartPage = false;
   };
 
-  // Optional Half-Title / Title Page
+  // 1. Half-Title / Title Page (strictly 12pt wrapped)
   startNewPage();
-  const isOdd = (currentPageNumber - 1) % 2 !== 0;
-  const leftX = bleedPt + (isOdd ? gutterPt : outerPt);
+  const isOddFirst = (currentPageNumber - 1) % 2 !== 0;
+  const leftXFirst = bleedPt + (isOddFirst ? gutterPt : outerPt);
 
-  // Draw Title Page
-  cursorY -= 80;
-  const bookTitle = config.bookTitle || bookModel.title || 'Publikacja A5';
-  const authorName = config.author || bookModel.author || 'Autor';
+  cursorY -= 60;
+  const rawBookTitle = config.bookTitle || bookModel.title || 'Publikacja A5';
+  const cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
 
-  safeDrawText(currentPage!, bookTitle, {
-    x: leftX,
+  const rawAuthor = config.author || bookModel.author || 'Autor';
+  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
+
+  const titleLines = breakParagraphIntoJustifiedLines(
+    cleanBookTitle,
+    boldFont,
+    FONT_SIZE_12PT,
+    columnWidthPt,
+    0
+  );
+
+  for (const tl of titleLines) {
+    let curX = leftXFirst;
+    for (const w of tl.words) {
+      safeDrawText(currentPage!, w, {
+        x: curX,
+        y: cursorY,
+        size: FONT_SIZE_12PT,
+        font: boldFont,
+        color: rgb(0.1, 0.1, 0.15),
+      });
+      curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+    }
+    cursorY -= LINE_HEIGHT_16PT;
+  }
+
+  cursorY -= 10;
+  safeDrawText(currentPage!, cleanAuthor, {
+    x: leftXFirst,
     y: cursorY,
-    size: 22,
-    font: boldFont,
-    color: rgb(0.1, 0.1, 0.15),
-  });
-  cursorY -= 35;
-
-  safeDrawText(currentPage!, authorName, {
-    x: leftX,
-    y: cursorY,
-    size: 13,
+    size: FONT_SIZE_12PT,
     font: regularFont,
     color: rgb(0.35, 0.35, 0.4),
   });
 
   cursorY -= 15;
   currentPage!.drawLine({
-    start: { x: leftX, y: cursorY },
-    end: { x: leftX + columnWidthPt, y: cursorY },
+    start: { x: leftXFirst, y: cursorY },
+    end: { x: leftXFirst + columnWidthPt, y: cursorY },
     thickness: 1,
     color: rgb(0.8, 0.82, 0.85),
   });
-  cursorY -= 40;
+  cursorY -= 35;
 
-  // Typeset all chapters
+  // 2. Typeset all chapters (Strictly 12pt format, no overflow)
   const totalChapters = bookModel.chapters.length;
 
   for (let chIdx = 0; chIdx < totalChapters; chIdx++) {
     const chapter = bookModel.chapters[chIdx];
-    activeChapterTitle = chapter.title;
+    const cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
 
-    // Start each chapter on a fresh page (classic book typography)
+    // Skip empty or noise chapters
+    if (!cleanChapterTitle) continue;
+    activeChapterTitle = cleanChapterTitle;
+
+    // Start each chapter on a fresh page
     if (currentPageNumber > 2) {
       isChapterStartPage = true;
       startNewPage();
@@ -401,33 +489,52 @@ export async function generateKdpA5PrintPdf({
     const curIsOdd = (currentPageNumber - 1) % 2 !== 0;
     const curLeftX = bleedPt + (curIsOdd ? gutterPt : outerPt);
 
-    // Chapter Header Drop (top margin + 40 pt)
-    cursorY -= 25;
-    const chapterTitleText = chapter.title;
-    safeDrawText(currentPage!, chapterTitleText, {
-      x: curLeftX,
-      y: cursorY,
-      size: 16,
-      font: boldFont,
-      color: rgb(0.1, 0.15, 0.25),
-    });
-    cursorY -= 22;
+    // Chapter Header (strictly 12pt bold, wrapped to prevent margin overflow)
+    cursorY -= 15;
+    const chapterHeadingLines = breakParagraphIntoJustifiedLines(
+      cleanChapterTitle,
+      boldFont,
+      FONT_SIZE_12PT,
+      columnWidthPt,
+      0
+    );
 
+    for (const chLine of chapterHeadingLines) {
+      if (cursorY - LINE_HEIGHT_16PT < bottomPt + 5) {
+        startNewPage();
+      }
+      let curX = curLeftX;
+      for (const w of chLine.words) {
+        safeDrawText(currentPage!, w, {
+          x: curX,
+          y: cursorY,
+          size: FONT_SIZE_12PT,
+          font: boldFont,
+          color: rgb(0.1, 0.15, 0.25),
+        });
+        curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+      }
+      cursorY -= LINE_HEIGHT_16PT;
+    }
+
+    // Small divider under chapter heading
+    cursorY -= 6;
     currentPage!.drawLine({
       start: { x: curLeftX, y: cursorY },
-      end: { x: curLeftX + 60, y: cursorY },
+      end: { x: Math.min(curLeftX + 50, curLeftX + columnWidthPt), y: cursorY },
       thickness: 1.5,
       color: rgb(0.2, 0.4, 0.8),
     });
-    cursorY -= 25;
+    cursorY -= 20;
 
     // Paragraphs in chapter
     for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
       const paragraph = chapter.paragraphs[pIdx];
-      if (!paragraph.text || paragraph.text.trim() === '') continue;
+      const cleanParaText = sanitizeExtractedText(paragraph.text, config.excludedPatterns);
+      if (!cleanParaText || cleanParaText.length <= 1) continue;
 
-      // Skip repeating chapter title if it's the first paragraph
-      if (pIdx === 0 && paragraph.isHeading && paragraph.text === chapter.title) {
+      // Skip repeating chapter title if it was first paragraph
+      if (pIdx === 0 && paragraph.isHeading && cleanParaText === cleanChapterTitle) {
         continue;
       }
 
@@ -435,18 +542,16 @@ export async function generateKdpA5PrintPdf({
       const applyIndent = !isFirstParaOfChapter && !paragraph.isHeading;
       const indentPt = applyIndent ? firstLineIndentPt : 0;
 
-      const pFontSize = paragraph.isHeading ? 13 : fontSizePt;
       const pFont = paragraph.isHeading || paragraph.isBold ? boldFont : regularFont;
-      const pLineHeight = paragraph.isHeading ? 18 : lineHeightPt;
 
       if (paragraph.isHeading) {
-        cursorY -= 12;
+        cursorY -= 10;
       }
 
       const justifiedLines = breakParagraphIntoJustifiedLines(
-        paragraph.text,
+        cleanParaText,
         pFont,
-        pFontSize,
+        FONT_SIZE_12PT,
         columnWidthPt,
         indentPt
       );
@@ -454,74 +559,86 @@ export async function generateKdpA5PrintPdf({
       for (let lIdx = 0; lIdx < justifiedLines.length; lIdx++) {
         const line = justifiedLines[lIdx];
 
-        // Check if page bottom reached
-        if (cursorY - pLineHeight < bottomPt + 10) {
+        // Ensure vertical margin is strictly respected
+        if (cursorY - LINE_HEIGHT_16PT < bottomPt + 5) {
           startNewPage();
         }
 
         const lineIsOdd = (currentPageNumber - 1) % 2 !== 0;
         const lineLeftMargin = bleedPt + (lineIsOdd ? gutterPt : outerPt);
         const startX = lineLeftMargin + line.firstLineIndent;
+        const maxLineRightX = lineLeftMargin + line.availableWidth;
 
-        // Render justified line
+        // Render line
         if (line.isLastLineOfParagraph || line.words.length <= 1) {
           // Left-aligned with standard space
           let currentWordX = startX;
-          const standardSpace = pFont.widthOfTextAtSize(' ', pFontSize);
+          const standardSpace = pFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
 
           for (const word of line.words) {
+            let wWidth: number;
+            try {
+              wWidth = pFont.widthOfTextAtSize(word, FONT_SIZE_12PT);
+            } catch {
+              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), FONT_SIZE_12PT);
+            }
+
+            // Strictly clamp so nothing overflows
+            const clampedX = Math.min(currentWordX, maxLineRightX - wWidth);
             safeDrawText(currentPage!, word, {
-              x: currentWordX,
+              x: Math.max(lineLeftMargin, clampedX),
               y: cursorY,
-              size: pFontSize,
+              size: FONT_SIZE_12PT,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
-            let wWidth: number;
-            try {
-              wWidth = pFont.widthOfTextAtSize(word, pFontSize);
-            } catch {
-              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), pFontSize);
-            }
             currentWordX += wWidth + standardSpace;
           }
         } else {
-          // Fully justified: calculate exact space width to hit right margin flush
+          // Fully justified: distribute remaining space evenly
           const numGaps = line.words.length - 1;
           const totalGapSpace = line.availableWidth - line.totalWordsWidth;
-          const justifiedGapWidth = totalGapSpace / numGaps;
+          const standardSpace = pFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+          let justifiedGapWidth = totalGapSpace / numGaps;
+
+          // Cap gap width if too few words to avoid excessive whitespace
+          if (justifiedGapWidth > standardSpace * 2.8) {
+            justifiedGapWidth = standardSpace * 1.5;
+          }
 
           let currentWordX = startX;
           for (let w = 0; w < line.words.length; w++) {
             const word = line.words[w];
+            let wWidth: number;
+            try {
+              wWidth = pFont.widthOfTextAtSize(word, FONT_SIZE_12PT);
+            } catch {
+              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), FONT_SIZE_12PT);
+            }
+
+            // Strictly clamp to prevent overflowing right margin
+            const clampedX = Math.min(currentWordX, maxLineRightX - wWidth);
             safeDrawText(currentPage!, word, {
-              x: currentWordX,
+              x: Math.max(lineLeftMargin, clampedX),
               y: cursorY,
-              size: pFontSize,
+              size: FONT_SIZE_12PT,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
-            let wWidth: number;
-            try {
-              wWidth = pFont.widthOfTextAtSize(word, pFontSize);
-            } catch {
-              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), pFontSize);
-            }
             currentWordX += wWidth + justifiedGapWidth;
           }
         }
 
-        cursorY -= pLineHeight;
+        cursorY -= LINE_HEIGHT_16PT;
       }
 
-      // Paragraph spacing
-      cursorY -= paragraph.isHeading ? 10 : 6;
+      cursorY -= paragraph.isHeading ? 8 : 4;
     }
 
     onProgress?.(chIdx + 1, totalChapters);
   }
 
-  // Draw any document QR codes onto designated pages if requested
+  // Draw any document QR codes into appendix if requested
   if (config.includeQRCodes && qrItems.length > 0) {
     const totalGeneratedPages = pdfDoc.getPageCount();
     for (const item of qrItems) {
@@ -530,7 +647,7 @@ export async function generateKdpA5PrintPdf({
         const qrPng = await generateQRPngBytes(qrContent, item, 256);
         const qrImage = await pdfDoc.embedPng(qrPng);
 
-        const targetPage = pdfDoc.getPage(totalGeneratedPages - 1); // place in appendix/back
+        const targetPage = pdfDoc.getPage(totalGeneratedPages - 1);
         const qrPt = mmToPt(item.sizeMm || 25);
         targetPage.drawImage(qrImage, {
           x: (pageWidthPt - qrPt) / 2,
