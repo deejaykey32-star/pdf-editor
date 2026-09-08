@@ -43,10 +43,41 @@ const DEFAULT_UNWANTED_PATTERNS = [
   /widokinaraj(?:\.pl)?/gi,
   /eMBiK\s*365/gi,
 
-  // Placeholders
+  // Placeholders & Document fallback strings
+  /Dokument\s+A5\s+Amazon\s+KDP/gi,
+  /Dokument\s+A5/gi,
+  /Amazon\s+KDP/gi,
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
+
+  // Czterech tomów / tomy
+  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tom[oó]w\b/gi,
+  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tomach\b/gi,
+  /\bczterech\s+tom[oó]w\b/gi,
+  /\bczterech\s+tomach\b/gi,
+  /\btom\s+[IVXLCDM\d]+\s+(?:z\s+)?czterech\s+tom[oó]w\b/gi,
 ];
+
+function deduplicateOverlappingText(text) {
+  if (!text) return '';
+  let cleaned = text;
+
+  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów")
+  cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)\s+\1\b/giu, '$1');
+
+  // 2. Remove duplicate adjacent 2-to-6 word phrases (e.g. "czterech tomów czterech tomów" -> "czterech tomów")
+  for (let pass = 0; pass < 2; pass++) {
+    cleaned = cleaned.replace(
+      /\b([\p{L}\d]+(?:\s+[\p{L}\d]+){1,5})\s+\1\b/giu,
+      '$1'
+    );
+  }
+
+  // 3. Remove stuttered characters or collision artifacts
+  cleaned = cleaned.replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ');
+
+  return cleaned.replace(/\s{2,}/g, ' ').trim();
+}
 
 function deduplicateDayHeading(text) {
   if (!text) return '';
@@ -93,17 +124,20 @@ function sanitizeExtractedText(text, customPatterns = []) {
   if (!text) return '';
   let cleaned = text;
 
-  // 1. Transform long specific headings into "Wstęp" as requested
+  // 1. Separate and deduplicate overlapping text artifacts and consecutive repeated phrases
+  cleaned = deduplicateOverlappingText(cleaned);
+
+  // 2. Transform long specific headings into "Wstęp" as requested
   cleaned = cleaned.replace(
     /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
     'Wstęp'
   );
   cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
 
-  // 2. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
+  // 3. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
   cleaned = deduplicateDayHeading(cleaned);
 
-  // 3. Strip all unwanted patterns
+  // 4. Strip all unwanted patterns
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...customPatterns];
 
   for (const pattern of allPatterns) {
@@ -115,8 +149,11 @@ function sanitizeExtractedText(text, customPatterns = []) {
     }
   }
 
+  // 5. Clean overlapping phrase boundaries exposed after deletions
+  cleaned = deduplicateOverlappingText(cleaned);
+
   cleaned = cleaned
-    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' ')
+    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ')
     .replace(/\s*,\s*\./g, '.')
     .replace(/\s*\.\s*,/g, '.')
     .replace(/\s*,\s*,/g, ',')
@@ -234,8 +271,38 @@ async function runTests() {
   console.log('   ✓ Usunięto pusty nawias "( )".');
   console.log('   ✓ Zachowano pełną treść dat, cyklu i tajemnicy.\n');
 
+  // Test 1d: Removal of "Dokument A5 Amazon KDP", "czterech tomów", and deduplication of overlapping text
+  console.log('[4/5] Sprawdzanie usuwania "Dokument A5 Amazon KDP", "czterech tomów" i rozdzielania nałożeń tekstu...');
+  const dirtyOverlaps =
+    'Rozważanie poranne. Dokument A5 Amazon KDP Tom I z czterech tomów czterech tomów. ' +
+    'To jest czysty tekst modlitwy, z którego usunięto nałożenia tekstu czterech tomów i frazę Dokument A5 Amazon KDP.';
+
+  const cleanedOverlaps = sanitizeExtractedText(dirtyOverlaps);
+  console.log('   Oryginalny tekst z nałożeniami:', dirtyOverlaps);
+  console.log('   Oczyszczony tekst:', cleanedOverlaps);
+
+  if (
+    cleanedOverlaps.includes('Dokument A5 Amazon KDP') ||
+    cleanedOverlaps.includes('Dokument A5') ||
+    cleanedOverlaps.includes('Amazon KDP')
+  ) {
+    throw new Error('Test FAILED: Fraza "Dokument A5 Amazon KDP" nie została usunięta!');
+  }
+
+  if (cleanedOverlaps.includes('czterech tomów') || cleanedOverlaps.includes('czterech tomach')) {
+    throw new Error('Test FAILED: Fraza "czterech tomów" nie została usunięta!');
+  }
+
+  if (!cleanedOverlaps.includes('Rozważanie poranne.') || !cleanedOverlaps.includes('To jest czysty tekst modlitwy')) {
+    throw new Error('Test FAILED: Prawidłowy tekst został naruszony!');
+  }
+
+  console.log('   ✓ Pomyślnie wycięto frazę "Dokument A5 Amazon KDP".');
+  console.log('   ✓ Pomyślnie wycięto frazę "czterech tomów".');
+  console.log('   ✓ Rozdzielono i usunięto nałożone/powielone fragmenty tekstu.\n');
+
   // Test 2: Verify KDP PDF margins & 12pt format
-  console.log('[4/4] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');
+  console.log('[5/5] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
 

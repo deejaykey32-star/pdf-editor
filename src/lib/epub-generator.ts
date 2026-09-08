@@ -180,8 +180,12 @@ nav#toc a {
 `;
   zip.file('OEBPS/styles/stylesheet.css', stylesheetCss);
 
-  const rawBookTitle = config.title || bookModel.title || 'Dokument A5';
-  const bookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns) || 'Dokument A5';
+  const rawBookTitle = config.title || bookModel.title || '';
+  let cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
+  if (/^(dokument\s*a5|amazon\s*kdp|dokument\s*a5\s*amazon\s*kdp)$/i.test(cleanBookTitle.trim())) {
+    cleanBookTitle = '';
+  }
+  const bookTitle = cleanBookTitle || bookModel.chapters[0]?.title || '';
 
   const rawAuthor = config.author || bookModel.author || '';
   const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
@@ -197,15 +201,15 @@ nav#toc a {
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}">
 <head>
-  <title>${escapeXml(bookTitle)}</title>
+  <title>${escapeXml(bookTitle || 'Książka')}</title>
   <link rel="stylesheet" type="text/css" href="../styles/stylesheet.css" />
 </head>
 <body epub:type="frontmatter titlepage">
   <section class="titlepage">
-    <h1 class="book-title">${escapeXml(bookTitle)}</h1>
+    ${bookTitle ? `<h1 class="book-title">${escapeXml(bookTitle)}</h1>` : ''}
     ${isAuthorValid ? `<p class="book-author">${escapeXml(author)}</p>` : ''}
     <hr class="title-separator" />
-    <p style="text-align: center; font-size: 11pt; color: #777;">Wydanie cyfrowe ePUB (Format 12 pt | Amazon KDP eBook)</p>
+    <p style="text-align: center; font-size: 11pt; color: #777;">Wydanie cyfrowe ePUB (Format 12 pt)</p>
   </section>
 </body>
 </html>`;

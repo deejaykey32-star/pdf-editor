@@ -53,10 +53,45 @@ export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
   /widokinaraj(?:\.pl)?/gi,
   /eMBiK\s*365/gi,
 
-  // Placeholders
+  // Placeholders & Document fallback strings
+  /Dokument\s+A5\s+Amazon\s+KDP/gi,
+  /Dokument\s+A5/gi,
+  /Amazon\s+KDP/gi,
   /Autor\s+Publikacji/gi,
   /\bWprowadzenie\b/gi,
+
+  // Czterech tomów / tomy
+  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tom[oó]w\b/gi,
+  /(?:ca[łl]o[sś][ćc]\s+)?(?:w\s+|z\s+)?czterech\s+tomach\b/gi,
+  /\bczterech\s+tom[oó]w\b/gi,
+  /\bczterech\s+tomach\b/gi,
+  /\btom\s+[IVXLCDM\d]+\s+(?:z\s+)?czterech\s+tom[oó]w\b/gi,
 ];
+
+/**
+ * Separates and removes overlapping text artifacts, duplicated words/phrases,
+ * and collisions caused by multi-layer or shadow text in the source PDF.
+ */
+export function deduplicateOverlappingText(text: string): string {
+  if (!text) return '';
+  let cleaned = text;
+
+  // 1. Remove duplicate adjacent single words (e.g. "tomów tomów" -> "tomów")
+  cleaned = cleaned.replace(/\b([\p{L}\d]+(?:-[\p{L}\d]+)?)\s+\1\b/giu, '$1');
+
+  // 2. Remove duplicate adjacent 2-to-6 word phrases (e.g. "czterech tomów czterech tomów" -> "czterech tomów")
+  for (let pass = 0; pass < 2; pass++) {
+    cleaned = cleaned.replace(
+      /\b([\p{L}\d]+(?:\s+[\p{L}\d]+){1,5})\s+\1\b/giu,
+      '$1'
+    );
+  }
+
+  // 3. Remove stuttered characters or collision artifacts
+  cleaned = cleaned.replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ');
+
+  return cleaned.replace(/\s{2,}/g, ' ').trim();
+}
 
 /**
  * Deduplicates repeated occurrences of "Dzień <number>" in headings and line strings
@@ -116,17 +151,20 @@ export function sanitizeExtractedText(
   if (!text) return '';
   let cleaned = text;
 
-  // 1. Transform long specific headings into "Wstęp" as requested
+  // 1. Separate and deduplicate overlapping text artifacts and consecutive repeated phrases
+  cleaned = deduplicateOverlappingText(cleaned);
+
+  // 2. Transform long specific headings into "Wstęp" as requested
   cleaned = cleaned.replace(
     /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
     'Wstęp'
   );
   cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
 
-  // 2. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
+  // 3. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
   cleaned = deduplicateDayHeading(cleaned);
 
-  // 3. Strip all unwanted patterns
+  // 4. Strip all unwanted patterns (including "Dokument A5 Amazon KDP", "czterech tomów", etc.)
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...(customPatterns || [])];
 
   for (const pattern of allPatterns) {
@@ -138,9 +176,12 @@ export function sanitizeExtractedText(
     }
   }
 
-  // 3. Clean dangling dashes, commas, colons, double punctuation, and repeated spaces
+  // 5. Clean overlapping phrase boundaries exposed after deletions
+  cleaned = deduplicateOverlappingText(cleaned);
+
+  // 6. Clean dangling dashes, commas, colons, double punctuation, and repeated spaces
   cleaned = cleaned
-    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' ')
+    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ')
     .replace(/\s*,\s*\./g, '.')
     .replace(/\s*\.\s*,/g, '.')
     .replace(/\s*\.\s*\./g, '.')
@@ -233,8 +274,29 @@ export async function extractBookContentFromPdf(
       });
     }
 
+    // Filter out duplicate overlapping text items (shadows, multi-layer rendering passes)
+    const nonOverlappingItems: RawTextItem[] = [];
+    for (const item of rawItems) {
+      const isDuplicateOverlap = nonOverlappingItems.some((existing) => {
+        const sameY = Math.abs(existing.y - item.y) <= 1.5;
+        const sameX = Math.abs(existing.x - item.x) <= 2.5;
+        if (sameY && sameX) {
+          return (
+            existing.str.trim() === item.str.trim() ||
+            existing.str.includes(item.str) ||
+            item.str.includes(existing.str)
+          );
+        }
+        return false;
+      });
+
+      if (!isDuplicateOverlap) {
+        nonOverlappingItems.push(item);
+      }
+    }
+
     // Sort items top-to-bottom (Y desc), then left-to-right (X asc)
-    rawItems.sort((a, b) => {
+    nonOverlappingItems.sort((a, b) => {
       const yDiff = Math.abs(a.y - b.y);
       if (yDiff <= 3) {
         return a.x - b.x;
@@ -255,12 +317,22 @@ export async function extractBookContentFromPdf(
     let currentLineY: number | null = null;
 
     const pushCleanedLine = (itemsToFlush: RawTextItem[], yCoord: number) => {
-      const rawText = itemsToFlush
-        .map((i) => i.str.trim())
-        .filter(Boolean)
-        .join(' ')
-        .replace(/\s+/g, ' ');
+      // Sort items within line strictly from left to right
+      itemsToFlush.sort((a, b) => a.x - b.x);
 
+      // Assemble line text, ensuring touching or overlapping word fragments are cleanly separated by a space
+      let lineStr = '';
+      for (const it of itemsToFlush) {
+        const chunk = it.str.trim();
+        if (!chunk) continue;
+        if (lineStr.length === 0) {
+          lineStr = chunk;
+        } else {
+          lineStr += (lineStr.endsWith(' ') ? '' : ' ') + chunk;
+        }
+      }
+
+      const rawText = lineStr.replace(/\s+/g, ' ');
       const cleanedText = sanitizeExtractedText(rawText, customPatterns);
       const maxFont = Math.max(...itemsToFlush.map((i) => i.fontSize));
 
@@ -275,7 +347,7 @@ export async function extractBookContentFromPdf(
       }
     };
 
-    for (const item of rawItems) {
+    for (const item of nonOverlappingItems) {
       if (currentLineY === null) {
         currentLineY = item.y;
         currentLineItems = [item];
@@ -422,7 +494,7 @@ export async function extractBookContentFromPdf(
   }
 
   return {
-    title: detectedTitle || 'Dokument A5 Amazon KDP',
+    title: detectedTitle || '',
     author: '',
     chapters: validChapters,
     totalWords: totalWordsCount,

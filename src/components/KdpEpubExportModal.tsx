@@ -45,7 +45,10 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
 
   // Exclusion filter text (lines to strip from extracted text)
   const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
-    `WnR365 Calosc Ksiega A5   całość   06.09.2026
+    `Dokument A5 Amazon KDP
+czterech tomów
+Dokument A5
+WnR365 Calosc Ksiega A5   całość   06.09.2026
 Widoki na Raj — WnR365
 Wstęp i Misja eMBiK365
 eMBiK365 — widokinaraj.pl str. 2
@@ -82,7 +85,7 @@ eMBiK365`
     lineHeightPt: 16,
     textAlign: 'justify',
     fontFamily: 'georgia',
-    bookTitle: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || 'Dokument A5',
+    bookTitle: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || '',
     author: '',
     runningHeader: true,
     pageNumbers: true,
@@ -93,7 +96,7 @@ eMBiK365`
 
   // ePUB Configuration
   const [epubConfig, setEpubConfig] = useState<EpubConfig>({
-    title: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || 'Dokument A5',
+    title: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || '',
     author: '',
     language: 'pl',
     fontSizePt: 12,
@@ -123,7 +126,7 @@ eMBiK365`
       try {
         const source = pdfDocProxy || documentInfo?.data;
         const model = await extractBookContentFromPdf(source, {
-          fallbackTitle: documentInfo?.name || 'Dokument A5',
+          fallbackTitle: documentInfo?.name.replace(/\.pdf$/i, '') || '',
           customExcludedPatterns: patternsToExclude,
         });
 
@@ -805,9 +808,9 @@ eMBiK365`
                   {kdpConfig.runningHeader && (
                     <div className="pb-1 mb-2 border-b border-zinc-300 flex items-center justify-between text-[7.5px] text-zinc-500">
                       <span className="truncate max-w-[140px]">
-                        {previewParity === 'odd' ? (bookModel?.chapters[0]?.title || 'Rozdział 1') : kdpConfig.bookTitle}
+                        {previewParity === 'odd' ? (bookModel?.chapters[0]?.title || '') : (kdpConfig.bookTitle || bookModel?.chapters[0]?.title || '')}
                       </span>
-                      <span className="font-mono">A5 Druk KDP</span>
+                      <span className="font-mono text-zinc-400">{previewParity === 'odd' ? 'Recto' : 'Verso'}</span>
                     </div>
                   )}
 

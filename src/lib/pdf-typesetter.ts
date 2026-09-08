@@ -355,6 +355,9 @@ export async function generateKdpA5PrintPdf({
       const headerY = pageHeightPt - topPt + 14;
       let rawHeaderText = isOdd ? activeChapterTitle : (config.bookTitle || bookModel.title);
       let cleanHeaderText = sanitizeExtractedText(rawHeaderText, config.excludedPatterns);
+      if (/^(dokument\s*a5|amazon\s*kdp|dokument\s*a5\s*amazon\s*kdp)$/i.test(cleanHeaderText.trim())) {
+        cleanHeaderText = isOdd ? '' : activeChapterTitle;
+      }
 
       if (cleanHeaderText && cleanHeaderText.trim().length > 0) {
         const headerSize = 9;
@@ -429,6 +432,7 @@ export async function generateKdpA5PrintPdf({
   const hasDistinctTitlePage = Boolean(
     cleanBookTitle &&
     cleanBookTitle.toLowerCase() !== 'wstęp' &&
+    !/^(dokument\s*a5|amazon\s*kdp|dokument\s*a5\s*amazon\s*kdp)$/i.test(cleanBookTitle.trim()) &&
     cleanBookTitle.length > 2 &&
     cleanBookTitle !== bookModel.chapters[0]?.title
   );
