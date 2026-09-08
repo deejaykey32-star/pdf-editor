@@ -48,6 +48,47 @@ const DEFAULT_UNWANTED_PATTERNS = [
   /\bWprowadzenie\b/gi,
 ];
 
+function deduplicateDayHeading(text) {
+  if (!text) return '';
+  let cleaned = text;
+
+  // Clean empty parentheses like "( )" or "( )—"
+  cleaned = cleaned.replace(/\(\s*\)\s*[-—–]?\s*/g, ' — ');
+
+  // Find all day mentions with numbers
+  const matches = Array.from(cleaned.matchAll(/\b(?:dzie[nń])\s*(\d+)\b/gi));
+  if (matches.length > 1) {
+    const dayNumbers = Array.from(new Set(matches.map((m) => m[1])));
+
+    for (const dayNum of dayNumbers) {
+      const dayRegex = new RegExp(`\\b(?:dzie[nń])\\s*${dayNum}\\b`, 'i');
+      const firstMatch = cleaned.match(dayRegex);
+      if (!firstMatch || firstMatch.index === undefined) continue;
+
+      const firstIdx = firstMatch.index;
+      const matchLen = firstMatch[0].length;
+      const prefix = cleaned.slice(0, firstIdx + matchLen);
+      const rest = cleaned.slice(firstIdx + matchLen);
+
+      // In rest, remove all repeated occurrences of "Dzień <dayNum>" and their trailing colons/dashes
+      const repeatPattern = new RegExp(`\\b(?:dzie[nń])\\s*${dayNum}\\b(?:\\s*[-—–:])?`, 'gi');
+      let cleanedRest = rest.replace(repeatPattern, ' ');
+
+      cleaned = `${prefix} ${cleanedRest}`;
+    }
+  }
+
+  // Clean double dashes, colons or spaces
+  cleaned = cleaned
+    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ')
+    .replace(/\s*,\s*\./g, '.')
+    .replace(/\s*\.\s*,/g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return cleaned;
+}
+
 function sanitizeExtractedText(text, customPatterns = []) {
   if (!text) return '';
   let cleaned = text;
@@ -59,7 +100,10 @@ function sanitizeExtractedText(text, customPatterns = []) {
   );
   cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
 
-  // 2. Strip all unwanted patterns
+  // 2. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
+  cleaned = deduplicateDayHeading(cleaned);
+
+  // 3. Strip all unwanted patterns
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...customPatterns];
 
   for (const pattern of allPatterns) {
@@ -155,8 +199,43 @@ async function runTests() {
   }
   console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy, nagłówki i numerację stron z WnR365.\n');
 
+  // Test 1c: Deduplicate repeated "Dzień X" in daily prayer/meditation headings
+  console.log('[3/4] Sprawdzanie usuwania powtórzeń "Dzień 1" i pogrubienia nagłówka dnia...');
+  const rawDayHeading =
+    'DZIEŃ 1 — 25 GRUDNIA / 25 czerwca Cykl I /II ( )— Dzień 1 Dzień 1: Dzień 1- Etap 1- Część 1- Tajemnica 1 Stworzenie świata i człowieka';
+
+  const cleanedDayHeading = sanitizeExtractedText(rawDayHeading);
+  console.log('   Oryginalny nagłówek dnia:', rawDayHeading);
+  console.log('   Oczyszczony nagłówek dnia:', cleanedDayHeading);
+
+  // Assertions:
+  // 1. Must contain "DZIEŃ 1" once
+  const dayMatches = cleanedDayHeading.match(/\bdzie[nń]\s*1\b/gi) || [];
+  if (dayMatches.length !== 1) {
+    throw new Error(`Test FAILED: Oczekiwano dokładnie 1 wystąpienia "Dzień 1", a znaleziono ${dayMatches.length}!`);
+  }
+
+  // 2. Must not contain "( )"
+  if (cleanedDayHeading.includes('( )') || cleanedDayHeading.includes('()')) {
+    throw new Error('Test FAILED: Puste nawiasy ( ) nie zostały usunięte!');
+  }
+
+  // 3. Must preserve remaining details: dates, cycle, stage, part, mystery, title
+  if (
+    !cleanedDayHeading.includes('25 GRUDNIA / 25 czerwca Cykl I /II') ||
+    !cleanedDayHeading.includes('Etap 1') ||
+    !cleanedDayHeading.includes('Część 1') ||
+    !cleanedDayHeading.includes('Tajemnica 1 Stworzenie świata i człowieka')
+  ) {
+    throw new Error('Test FAILED: Treść merytoryczna nagłówka dnia została naruszona!');
+  }
+
+  console.log('   ✓ Usunięto wszystkie zbędne powtórzenia słowa "Dzień 1".');
+  console.log('   ✓ Usunięto pusty nawias "( )".');
+  console.log('   ✓ Zachowano pełną treść dat, cyklu i tajemnicy.\n');
+
   // Test 2: Verify KDP PDF margins & 12pt format
-  console.log('[2/3] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');
+  console.log('[4/4] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
 

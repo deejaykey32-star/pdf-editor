@@ -70,7 +70,7 @@ body {
 }
 
 h1, h2, h3, h4, h5, h6,
-h1.book-title, h1.chapter-title {
+h1.book-title, h1.chapter-title, .day-heading, strong, b {
   font-size: 12pt !important;
   font-weight: bold;
   line-height: 1.4;
@@ -266,9 +266,12 @@ nav#toc a {
         continue;
       }
 
+      const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleanParaText);
       const pClass = renderedParasCount === 0 ? 'class="first"' : '';
-      if (p.isHeading) {
-        paragraphsHtml += `    <h2>${escapeXml(cleanParaText)}</h2>\n`;
+      if (p.isHeading || isDayHeading) {
+        paragraphsHtml += `    <h2 class="day-heading"><strong>${escapeXml(cleanParaText)}</strong></h2>\n`;
+      } else if (p.isBold) {
+        paragraphsHtml += `    <p ${pClass}><strong>${escapeXml(cleanParaText)}</strong></p>\n`;
       } else {
         paragraphsHtml += `    <p ${pClass}>${escapeXml(cleanParaText)}</p>\n`;
       }

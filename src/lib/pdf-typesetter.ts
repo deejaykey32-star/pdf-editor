@@ -562,13 +562,14 @@ export async function generateKdpA5PrintPdf({
         continue;
       }
 
+      const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleanParaText);
       const isFirstParaOfChapter = pIdx === 0 || (pIdx === 1 && chapter.paragraphs[0].isHeading);
-      const applyIndent = !isFirstParaOfChapter && !paragraph.isHeading;
+      const applyIndent = !isFirstParaOfChapter && !paragraph.isHeading && !isDayHeading;
       const indentPt = applyIndent ? firstLineIndentPt : 0;
 
-      const pFont = paragraph.isHeading || paragraph.isBold ? boldFont : regularFont;
+      const pFont = paragraph.isHeading || paragraph.isBold || isDayHeading ? boldFont : regularFont;
 
-      if (paragraph.isHeading) {
+      if (paragraph.isHeading || isDayHeading) {
         cursorY -= 10;
       }
 

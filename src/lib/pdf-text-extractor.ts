@@ -59,9 +59,55 @@ export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
 ];
 
 /**
+ * Deduplicates repeated occurrences of "Dzień <number>" in headings and line strings
+ * (e.g. "DZIEŃ 1 — ... ( )— Dzień 1 Dzień 1: Dzień 1- Etap 1..." -> "DZIEŃ 1 — ... — Etap 1...")
+ * and eliminates empty artifact parentheses like "( )" or "( )—".
+ */
+export function deduplicateDayHeading(text: string): string {
+  if (!text) return '';
+  let cleaned = text;
+
+  // Clean empty parentheses like "( )" or "( )—"
+  cleaned = cleaned.replace(/\(\s*\)\s*[-—–]?\s*/g, ' — ');
+
+  // Find all day mentions with numbers
+  const matches = Array.from(cleaned.matchAll(/\b(?:dzie[nń])\s*(\d+)\b/gi));
+  if (matches.length > 1) {
+    const dayNumbers = Array.from(new Set(matches.map((m) => m[1])));
+
+    for (const dayNum of dayNumbers) {
+      const dayRegex = new RegExp(`\\b(?:dzie[nń])\\s*${dayNum}\\b`, 'i');
+      const firstMatch = cleaned.match(dayRegex);
+      if (!firstMatch || firstMatch.index === undefined) continue;
+
+      const firstIdx = firstMatch.index;
+      const matchLen = firstMatch[0].length;
+      const prefix = cleaned.slice(0, firstIdx + matchLen);
+      const rest = cleaned.slice(firstIdx + matchLen);
+
+      // In rest, remove all repeated occurrences of "Dzień <dayNum>" and their trailing colons/dashes
+      const repeatPattern = new RegExp(`\\b(?:dzie[nń])\\s*${dayNum}\\b(?:\\s*[-—–:])?`, 'gi');
+      let cleanedRest = rest.replace(repeatPattern, ' ');
+
+      cleaned = `${prefix} ${cleanedRest}`;
+    }
+  }
+
+  // Clean double dashes, colons or spaces
+  cleaned = cleaned
+    .replace(/\s*[-—–]\s*[-—–]\s*/g, ' — ')
+    .replace(/\s*,\s*\./g, '.')
+    .replace(/\s*\.\s*,/g, '.')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
+  return cleaned;
+}
+
+/**
  * Normalizes headings and removes unwanted headers, footers, and noise fragments from text,
- * transforming "Wstęp do Różańca Historii Zbawienia – RHZ365" into "Wstęp"
- * without modifying the actual reading body text under it.
+ * transforming "Wstęp do Różańca Historii Zbawienia – RHZ365" into "Wstęp",
+ * deduplicating repeated day titles, without modifying the actual reading body text under it.
  */
 export function sanitizeExtractedText(
   text: string,
@@ -77,7 +123,10 @@ export function sanitizeExtractedText(
   );
   cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
 
-  // 2. Strip all unwanted patterns
+  // 2. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
+  cleaned = deduplicateDayHeading(cleaned);
+
+  // 3. Strip all unwanted patterns
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...(customPatterns || [])];
 
   for (const pattern of allPatterns) {
@@ -258,12 +307,13 @@ export async function extractBookContentFromPdf(
       const words = cleaned.split(/\s+/).length;
       totalWordsCount += words;
 
+      const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleaned);
       currentChapter.paragraphs.push({
         text: cleaned,
-        isHeading,
-        headingLevel: headingLvl,
+        isHeading: isHeading || isDayHeading,
+        headingLevel: isHeading ? headingLvl : (isDayHeading ? 2 : 0),
         fontSize: 12, // Strictly 12pt format
-        isBold: isHeading,
+        isBold: isHeading || isDayHeading,
       });
     };
 
@@ -272,6 +322,7 @@ export async function extractBookContentFromPdf(
       const isChapterHeadingCandidate =
         line.fontSize >= 13 ||
         /^(rozdzia[łl]|chapter|część|akt|wstęp|prolog|epilog)\b/i.test(line.text) ||
+        /\b(?:dzie[nń])\s*\d+\b/i.test(line.text) ||
         (line.isUpper && line.text.length < 60 && line.fontSize >= 11);
 
       // Check if this indicates a new chapter
