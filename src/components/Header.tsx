@@ -8,6 +8,7 @@ import {
   Sparkles,
   Layers,
   CheckCircle2,
+  BookOpen,
 } from 'lucide-react';
 import { PdfDocumentInfo } from '@/types/pdf';
 
@@ -16,6 +17,7 @@ interface HeaderProps {
   onFileUpload: (file: File) => void;
   onGenerateSample: (count: number) => void;
   onExportClick: () => void;
+  onOpenKdpEpubModal?: () => void;
   isProcessing: boolean;
   targetPagesCount: number;
 }
@@ -25,6 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   onFileUpload,
   onGenerateSample,
   onExportClick,
+  onOpenKdpEpubModal,
   isProcessing,
   targetPagesCount,
 }) => {
@@ -127,6 +130,21 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Amazon KDP & ePUB Studio Button */}
+        <button
+          onClick={onOpenKdpEpubModal}
+          disabled={!documentInfo}
+          className={`px-3 py-1.5 text-xs font-semibold rounded-md shadow-sm transition flex items-center gap-1.5 ${
+            !documentInfo
+              ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/50'
+              : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white cursor-pointer shadow-indigo-600/20 hover:shadow-indigo-600/40'
+          }`}
+          title="Otwórz studio eksportu do druku Amazon KDP (A5) i eBooka (ePUB)"
+        >
+          <BookOpen className="w-3.5 h-3.5" />
+          <span>Wydanie KDP & ePUB</span>
+        </button>
 
         {/* Export / Download Button */}
         <button

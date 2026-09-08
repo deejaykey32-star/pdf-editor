@@ -10,7 +10,10 @@
     "benchmark": "node scripts/benchmark-1500.mjs"
   },
   "dependencies": {
+    "@pdf-lib/fontkit": "^1.1.1",
+    "@types/jszip": "^3.4.0",
     "clsx": "^2.1.1",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.475.0",
     "next": "^14.2.24",
     "pdf-lib": "^1.17.1",

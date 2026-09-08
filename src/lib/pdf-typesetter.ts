@@ -1,0 +1,548 @@
+import { PDFDocument, rgb, StandardFonts, PDFFont } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
+import { KdpPrintConfig, ExtractedBookModel, ExtractedChapter, ExtractedParagraph } from '@/types/kdp-epub';
+import { mmToPt } from './coordinates';
+import { QRCodeItem } from '@/types/pdf';
+import { generateQRPngBytes, resolvePageContent } from './qr-generator';
+
+export interface GenerateKdpPdfOptions {
+  config: KdpPrintConfig;
+  bookModel: ExtractedBookModel;
+  originalBytes?: Uint8Array;
+  qrItems?: QRCodeItem[];
+  onProgress?: (current: number, total: number) => void;
+}
+
+// Standard DIN A5 Dimensions in mm and pt
+const A5_WIDTH_MM = 148;
+const A5_HEIGHT_MM = 210;
+const A5_WIDTH_PT = 419.53;
+const A5_HEIGHT_PT = 595.28;
+
+/**
+ * Loads font bytes safely from public/fonts or fallback
+ */
+async function loadFontBytes(url: string): Promise<Uint8Array | null> {
+  try {
+    if (typeof window !== 'undefined') {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const ab = await resp.arrayBuffer();
+        return new Uint8Array(ab);
+      }
+    }
+  } catch (err) {
+    console.warn(`Could not load font from ${url}, falling back to standard font:`, err);
+  }
+  return null;
+}
+
+/**
+ * Normalizes text for standard fonts if TTF Unicode font is not available
+ */
+function sanitizeForStandardFont(text: string): string {
+  return text
+    .replace(/ą/g, 'a')
+    .replace(/ć/g, 'c')
+    .replace(/ę/g, 'e')
+    .replace(/ł/g, 'l')
+    .replace(/ń/g, 'n')
+    .replace(/ó/g, 'o')
+    .replace(/ś/g, 's')
+    .replace(/ź/g, 'z')
+    .replace(/ż/g, 'z')
+    .replace(/Ą/g, 'A')
+    .replace(/Ć/g, 'C')
+    .replace(/Ę/g, 'E')
+    .replace(/Ł/g, 'L')
+    .replace(/Ń/g, 'N')
+    .replace(/Ó/g, 'O')
+    .replace(/Ś/g, 'S')
+    .replace(/Ź/g, 'Z')
+    .replace(/Ż/g, 'Z')
+    .replace(/[„”«»]/g, '"')
+    .replace(/[’‘]/g, "'")
+    .replace(/[–—]/g, '-');
+}
+
+/**
+ * Line breaking and high-precision full two-sided justification engine.
+ */
+interface JustifiedLine {
+  words: string[];
+  isLastLineOfParagraph: boolean;
+  totalWordsWidth: number;
+  availableWidth: number;
+  firstLineIndent: number;
+}
+
+function breakParagraphIntoJustifiedLines(
+  text: string,
+  font: PDFFont,
+  fontSize: number,
+  columnWidth: number,
+  firstLineIndentPt: number
+): JustifiedLine[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return [];
+
+  const spaceWidth = font.widthOfTextAtSize(' ', fontSize);
+  const lines: JustifiedLine[] = [];
+
+  let currentWords: string[] = [];
+  let currentWordsWidth = 0;
+  let isFirstLine = true;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    let wordWidth: number;
+    try {
+      wordWidth = font.widthOfTextAtSize(word, fontSize);
+    } catch {
+      wordWidth = font.widthOfTextAtSize(sanitizeForStandardFont(word), fontSize);
+    }
+
+    const currentIndent = isFirstLine ? firstLineIndentPt : 0;
+    const availableWidth = columnWidth - currentIndent;
+    const prospectiveSpaces = currentWords.length;
+    const prospectiveWidth = currentWordsWidth + wordWidth + prospectiveSpaces * spaceWidth;
+
+    if (prospectiveWidth <= availableWidth || currentWords.length === 0) {
+      currentWords.push(word);
+      currentWordsWidth += wordWidth;
+    } else {
+      // Line is full -> push as justified line
+      lines.push({
+        words: currentWords,
+        isLastLineOfParagraph: false,
+        totalWordsWidth: currentWordsWidth,
+        availableWidth,
+        firstLineIndent: currentIndent,
+      });
+
+      // Start next line
+      currentWords = [word];
+      currentWordsWidth = wordWidth;
+      isFirstLine = false;
+    }
+  }
+
+  // Push remaining words as the last line of the paragraph
+  if (currentWords.length > 0) {
+    const currentIndent = isFirstLine ? firstLineIndentPt : 0;
+    lines.push({
+      words: currentWords,
+      isLastLineOfParagraph: true,
+      totalWordsWidth: currentWordsWidth,
+      availableWidth: columnWidth - currentIndent,
+      firstLineIndent: currentIndent,
+    });
+  }
+
+  return lines;
+}
+
+/**
+ * Generates an Amazon KDP Print-Ready PDF adhering to A5 specs,
+ * bleed, alternating gutter margins, 12pt justified typography, and headers/footers.
+ */
+export async function generateKdpA5PrintPdf({
+  config,
+  bookModel,
+  originalBytes,
+  qrItems = [],
+  onProgress,
+}: GenerateKdpPdfOptions): Promise<Uint8Array> {
+  const pdfDoc = await PDFDocument.create();
+  pdfDoc.registerFontkit(fontkit);
+
+  // Load custom serif font (Georgia) or fallback
+  let regularFont: PDFFont;
+  let boldFont: PDFFont;
+  let isCustomFont = false;
+
+  const georgiaBytes = await loadFontBytes('/fonts/georgia.ttf');
+  const georgiaBoldBytes = await loadFontBytes('/fonts/georgiab.ttf');
+
+  if (georgiaBytes && georgiaBoldBytes) {
+    try {
+      regularFont = await pdfDoc.embedFont(georgiaBytes);
+      boldFont = await pdfDoc.embedFont(georgiaBoldBytes);
+      isCustomFont = true;
+    } catch (e) {
+      console.warn('Failed to embed Georgia font, falling back to Times Roman:', e);
+      regularFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+      boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+    }
+  } else {
+    regularFont = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+    boldFont = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  }
+
+  const safeDrawText = (page: import('pdf-lib').PDFPage, text: string, options: any) => {
+    try {
+      page.drawText(text, options);
+    } catch {
+      page.drawText(sanitizeForStandardFont(text), options);
+    }
+  };
+
+  // Dimensional calculations
+  const hasBleed = config.bleed === 'kdp-standard';
+  const bleedPt = hasBleed ? mmToPt(config.bleedMm) : 0;
+
+  // With standard KDP bleed: width adds 3.2mm on outside, height adds 6.4mm (3.2mm top + 3.2mm bottom)
+  // For standard full page bleed calculation: 154.4 x 216.4 mm
+  const pageWidthMm = hasBleed ? A5_WIDTH_MM + 2 * config.bleedMm : A5_WIDTH_MM;
+  const pageHeightMm = hasBleed ? A5_HEIGHT_MM + 2 * config.bleedMm : A5_HEIGHT_MM;
+  const pageWidthPt = mmToPt(pageWidthMm);
+  const pageHeightPt = mmToPt(pageHeightMm);
+
+  const gutterPt = mmToPt(config.gutterMarginMm);
+  const outerPt = mmToPt(config.outerMarginMm);
+  const topPt = mmToPt(config.topMarginMm) + bleedPt;
+  const bottomPt = mmToPt(config.bottomMarginMm) + bleedPt;
+  const columnWidthPt = A5_WIDTH_PT - gutterPt - outerPt;
+  const columnHeightPt = A5_HEIGHT_PT - topPt - bottomPt;
+
+  const fontSizePt = config.fontSizePt || 12;
+  const lineHeightPt = config.lineHeightPt || 16;
+  const firstLineIndentPt = mmToPt(config.firstLineIndentMm || 5);
+
+  // ----------------------------------------------------
+  // BRANCH 1: Page Imposition Mode (existing PDF pages)
+  // ----------------------------------------------------
+  if (config.mode === 'impose-pages' && originalBytes && originalBytes.byteLength > 0) {
+    const origDoc = await PDFDocument.load(originalBytes, { ignoreEncryption: true });
+    const origPages = origDoc.getPages();
+    const embeddedPages = await pdfDoc.embedPages(origPages);
+
+    for (let i = 0; i < origPages.length; i++) {
+      const pageNum = i + 1;
+      const isOdd = pageNum % 2 !== 0;
+
+      const page = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
+      if (hasBleed) {
+        page.setTrimBox(bleedPt, bleedPt, A5_WIDTH_PT, A5_HEIGHT_PT);
+        page.setBleedBox(0, 0, pageWidthPt, pageHeightPt);
+      }
+
+      const origW = origPages[i].getWidth();
+      const origH = origPages[i].getHeight();
+
+      // Calculate scale to fit comfortably in KDP column area
+      const scaleX = columnWidthPt / origW;
+      const scaleY = columnHeightPt / origH;
+      const fitScale = Math.min(scaleX, scaleY, 1.0);
+
+      const placedW = origW * fitScale;
+      const placedH = origH * fitScale;
+
+      // Odd: Gutter is LEFT, Outer is RIGHT
+      // Even: Gutter is RIGHT, Outer is LEFT
+      const leftMargin = bleedPt + (isOdd ? gutterPt : outerPt);
+      const drawX = leftMargin + (columnWidthPt - placedW) / 2;
+      const drawY = bottomPt + (columnHeightPt - placedH) / 2;
+
+      page.drawPage(embeddedPages[i], {
+        x: drawX,
+        y: drawY,
+        xScale: fitScale,
+        yScale: fitScale,
+      });
+
+      // Running Header & Footer
+      if (config.pageNumbers) {
+        const pageNumText = String(pageNum);
+        const numWidth = regularFont.widthOfTextAtSize(pageNumText, 9);
+        const numX = isOdd
+          ? pageWidthPt - bleedPt - outerPt - numWidth
+          : bleedPt + outerPt;
+        safeDrawText(page, pageNumText, {
+          x: numX,
+          y: bottomPt - 18,
+          size: 9,
+          font: regularFont,
+          color: rgb(0.3, 0.3, 0.3),
+        });
+      }
+
+      onProgress?.(pageNum, origPages.length);
+    }
+
+    return await pdfDoc.save();
+  }
+
+  // ----------------------------------------------------
+  // BRANCH 2: Reflow Book Typesetting Mode (12pt Justified)
+  // ----------------------------------------------------
+  let currentPageNumber = 1;
+  let currentPage: import('pdf-lib').PDFPage | null = null;
+  let cursorY = 0;
+  let isChapterStartPage = false;
+  let activeChapterTitle = '';
+
+  const startNewPage = () => {
+    currentPage = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
+    if (hasBleed) {
+      currentPage.setTrimBox(bleedPt, bleedPt, A5_WIDTH_PT, A5_HEIGHT_PT);
+      currentPage.setBleedBox(0, 0, pageWidthPt, pageHeightPt);
+    }
+
+    const isOdd = currentPageNumber % 2 !== 0;
+    const contentTopY = pageHeightPt - topPt;
+    cursorY = contentTopY;
+
+    // Running Header (omit on chapter start page or title page)
+    if (config.runningHeader && !isChapterStartPage && currentPageNumber > 1) {
+      const headerY = pageHeightPt - topPt + 14;
+      const headerText = isOdd ? activeChapterTitle : config.bookTitle || bookModel.title;
+      const headerSize = 8.5;
+      const textW = regularFont.widthOfTextAtSize(sanitizeForStandardFont(headerText), headerSize);
+
+      const headerX = isOdd
+        ? pageWidthPt - bleedPt - outerPt - textW
+        : bleedPt + outerPt;
+
+      safeDrawText(currentPage, headerText, {
+        x: headerX,
+        y: headerY,
+        size: headerSize,
+        font: regularFont,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+
+      // Subtle header divider line
+      const lineLeft = bleedPt + (isOdd ? gutterPt : outerPt);
+      const lineRight = lineLeft + columnWidthPt;
+      currentPage.drawLine({
+        start: { x: lineLeft, y: headerY - 5 },
+        end: { x: lineRight, y: headerY - 5 },
+        thickness: 0.5,
+        color: rgb(0.85, 0.85, 0.85),
+      });
+    }
+
+    // Running Footer (Page Numbers)
+    if (config.pageNumbers) {
+      const pageNumStr = String(currentPageNumber);
+      const numSize = 9;
+      const numWidth = regularFont.widthOfTextAtSize(pageNumStr, numSize);
+      const footerY = bottomPt - 20;
+
+      // Recto (odd): number on right outer edge
+      // Verso (even): number on left outer edge
+      const numX = isOdd
+        ? pageWidthPt - bleedPt - outerPt - numWidth
+        : bleedPt + outerPt;
+
+      safeDrawText(currentPage, pageNumStr, {
+        x: numX,
+        y: footerY,
+        size: numSize,
+        font: regularFont,
+        color: rgb(0.3, 0.3, 0.3),
+      });
+    }
+
+    currentPageNumber++;
+    isChapterStartPage = false;
+  };
+
+  // Optional Half-Title / Title Page
+  startNewPage();
+  const isOdd = (currentPageNumber - 1) % 2 !== 0;
+  const leftX = bleedPt + (isOdd ? gutterPt : outerPt);
+
+  // Draw Title Page
+  cursorY -= 80;
+  const bookTitle = config.bookTitle || bookModel.title || 'Publikacja A5';
+  const authorName = config.author || bookModel.author || 'Autor';
+
+  safeDrawText(currentPage!, bookTitle, {
+    x: leftX,
+    y: cursorY,
+    size: 22,
+    font: boldFont,
+    color: rgb(0.1, 0.1, 0.15),
+  });
+  cursorY -= 35;
+
+  safeDrawText(currentPage!, authorName, {
+    x: leftX,
+    y: cursorY,
+    size: 13,
+    font: regularFont,
+    color: rgb(0.35, 0.35, 0.4),
+  });
+
+  cursorY -= 15;
+  currentPage!.drawLine({
+    start: { x: leftX, y: cursorY },
+    end: { x: leftX + columnWidthPt, y: cursorY },
+    thickness: 1,
+    color: rgb(0.8, 0.82, 0.85),
+  });
+  cursorY -= 40;
+
+  // Typeset all chapters
+  const totalChapters = bookModel.chapters.length;
+
+  for (let chIdx = 0; chIdx < totalChapters; chIdx++) {
+    const chapter = bookModel.chapters[chIdx];
+    activeChapterTitle = chapter.title;
+
+    // Start each chapter on a fresh page (classic book typography)
+    if (currentPageNumber > 2) {
+      isChapterStartPage = true;
+      startNewPage();
+    }
+
+    const curIsOdd = (currentPageNumber - 1) % 2 !== 0;
+    const curLeftX = bleedPt + (curIsOdd ? gutterPt : outerPt);
+
+    // Chapter Header Drop (top margin + 40 pt)
+    cursorY -= 25;
+    const chapterTitleText = chapter.title;
+    safeDrawText(currentPage!, chapterTitleText, {
+      x: curLeftX,
+      y: cursorY,
+      size: 16,
+      font: boldFont,
+      color: rgb(0.1, 0.15, 0.25),
+    });
+    cursorY -= 22;
+
+    currentPage!.drawLine({
+      start: { x: curLeftX, y: cursorY },
+      end: { x: curLeftX + 60, y: cursorY },
+      thickness: 1.5,
+      color: rgb(0.2, 0.4, 0.8),
+    });
+    cursorY -= 25;
+
+    // Paragraphs in chapter
+    for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
+      const paragraph = chapter.paragraphs[pIdx];
+      if (!paragraph.text || paragraph.text.trim() === '') continue;
+
+      // Skip repeating chapter title if it's the first paragraph
+      if (pIdx === 0 && paragraph.isHeading && paragraph.text === chapter.title) {
+        continue;
+      }
+
+      const isFirstParaOfChapter = pIdx === 0 || (pIdx === 1 && chapter.paragraphs[0].isHeading);
+      const applyIndent = !isFirstParaOfChapter && !paragraph.isHeading;
+      const indentPt = applyIndent ? firstLineIndentPt : 0;
+
+      const pFontSize = paragraph.isHeading ? 13 : fontSizePt;
+      const pFont = paragraph.isHeading || paragraph.isBold ? boldFont : regularFont;
+      const pLineHeight = paragraph.isHeading ? 18 : lineHeightPt;
+
+      if (paragraph.isHeading) {
+        cursorY -= 12;
+      }
+
+      const justifiedLines = breakParagraphIntoJustifiedLines(
+        paragraph.text,
+        pFont,
+        pFontSize,
+        columnWidthPt,
+        indentPt
+      );
+
+      for (let lIdx = 0; lIdx < justifiedLines.length; lIdx++) {
+        const line = justifiedLines[lIdx];
+
+        // Check if page bottom reached
+        if (cursorY - pLineHeight < bottomPt + 10) {
+          startNewPage();
+        }
+
+        const lineIsOdd = (currentPageNumber - 1) % 2 !== 0;
+        const lineLeftMargin = bleedPt + (lineIsOdd ? gutterPt : outerPt);
+        const startX = lineLeftMargin + line.firstLineIndent;
+
+        // Render justified line
+        if (line.isLastLineOfParagraph || line.words.length <= 1) {
+          // Left-aligned with standard space
+          let currentWordX = startX;
+          const standardSpace = pFont.widthOfTextAtSize(' ', pFontSize);
+
+          for (const word of line.words) {
+            safeDrawText(currentPage!, word, {
+              x: currentWordX,
+              y: cursorY,
+              size: pFontSize,
+              font: pFont,
+              color: rgb(0.12, 0.12, 0.12),
+            });
+            let wWidth: number;
+            try {
+              wWidth = pFont.widthOfTextAtSize(word, pFontSize);
+            } catch {
+              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), pFontSize);
+            }
+            currentWordX += wWidth + standardSpace;
+          }
+        } else {
+          // Fully justified: calculate exact space width to hit right margin flush
+          const numGaps = line.words.length - 1;
+          const totalGapSpace = line.availableWidth - line.totalWordsWidth;
+          const justifiedGapWidth = totalGapSpace / numGaps;
+
+          let currentWordX = startX;
+          for (let w = 0; w < line.words.length; w++) {
+            const word = line.words[w];
+            safeDrawText(currentPage!, word, {
+              x: currentWordX,
+              y: cursorY,
+              size: pFontSize,
+              font: pFont,
+              color: rgb(0.12, 0.12, 0.12),
+            });
+            let wWidth: number;
+            try {
+              wWidth = pFont.widthOfTextAtSize(word, pFontSize);
+            } catch {
+              wWidth = pFont.widthOfTextAtSize(sanitizeForStandardFont(word), pFontSize);
+            }
+            currentWordX += wWidth + justifiedGapWidth;
+          }
+        }
+
+        cursorY -= pLineHeight;
+      }
+
+      // Paragraph spacing
+      cursorY -= paragraph.isHeading ? 10 : 6;
+    }
+
+    onProgress?.(chIdx + 1, totalChapters);
+  }
+
+  // Draw any document QR codes onto designated pages if requested
+  if (config.includeQRCodes && qrItems.length > 0) {
+    const totalGeneratedPages = pdfDoc.getPageCount();
+    for (const item of qrItems) {
+      try {
+        const qrContent = resolvePageContent(item, 1, totalGeneratedPages);
+        const qrPng = await generateQRPngBytes(qrContent, item, 256);
+        const qrImage = await pdfDoc.embedPng(qrPng);
+
+        const targetPage = pdfDoc.getPage(totalGeneratedPages - 1); // place in appendix/back
+        const qrPt = mmToPt(item.sizeMm || 25);
+        targetPage.drawImage(qrImage, {
+          x: (pageWidthPt - qrPt) / 2,
+          y: bottomPt + 20,
+          width: qrPt,
+          height: qrPt,
+        });
+      } catch (err) {
+        console.warn('Failed to embed QR in KDP PDF:', err);
+      }
+    }
+  }
+
+  return await pdfDoc.save();
+}

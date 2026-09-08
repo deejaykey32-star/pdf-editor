@@ -28,6 +28,7 @@ import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
+  BookOpen,
 } from 'lucide-react';
 import {
   QRCodeItem,
@@ -69,6 +70,7 @@ interface SidebarRightProps {
   targetPagesCount: number;
   onApplyPreset: (preset: AlignmentPreset) => void;
   onExportClick: () => void;
+  onOpenKdpEpubModal?: () => void;
   onPageChange: (page: number) => void;
   isProcessing: boolean;
   qrPreviewUrl?: string;
@@ -99,6 +101,7 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
   targetPagesCount,
   onApplyPreset,
   onExportClick,
+  onOpenKdpEpubModal,
   onPageChange,
   isProcessing,
   qrPreviewUrl,
@@ -1072,6 +1075,18 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
               className="w-full py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-medium rounded border border-zinc-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <FilePlus className="w-3 h-3 text-blue-400" /> Wstaw nową stronę tytułową z QR (+1 str.)
+            </button>
+          )}
+
+          {/* Amazon KDP & ePUB Studio Button */}
+          {onOpenKdpEpubModal && (
+            <button
+              type="button"
+              onClick={onOpenKdpEpubModal}
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition cursor-pointer"
+            >
+              <BookOpen className="w-4 h-4 text-white" />
+              <span>Studio Wydawnicze KDP & eBook</span>
             </button>
           )}
 

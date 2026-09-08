@@ -15,6 +15,7 @@ import { WorkspaceCenter } from '@/components/WorkspaceCenter';
 import { SidebarRight } from '@/components/SidebarRight';
 import { StatusBar } from '@/components/StatusBar';
 import { ProgressModal } from '@/components/ProgressModal';
+import { KdpEpubExportModal } from '@/components/KdpEpubExportModal';
 import { parsePdfDocument } from '@/lib/pdf-service';
 import { generateSyntheticA5Pdf } from '@/lib/sample-pdf';
 import { generateQRDataUrl, resolvePageContent, interpolateQRText } from '@/lib/qr-generator';
@@ -76,6 +77,7 @@ export default function Home() {
     status: 'idle',
   });
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
+  const [isKdpModalOpen, setIsKdpModalOpen] = useState<boolean>(false);
   const [modifiedPdfBlobUrl, setModifiedPdfBlobUrl] = useState<string | null>(null);
 
   const currentPageDim = documentInfo?.pages[currentPage - 1] || {
@@ -511,6 +513,7 @@ export default function Home() {
         onFileUpload={handleFileUpload}
         onGenerateSample={handleGenerateSample}
         onExportClick={handleExportClick}
+        onOpenKdpEpubModal={() => setIsKdpModalOpen(true)}
         isProcessing={progress.status === 'processing'}
         targetPagesCount={totalTargetedPages}
       />
@@ -569,6 +572,7 @@ export default function Home() {
           targetPagesCount={totalTargetedPages}
           onApplyPreset={handleApplyPreset}
           onExportClick={handleExportClick}
+          onOpenKdpEpubModal={() => setIsKdpModalOpen(true)}
           onPageChange={(p) => setCurrentPage(p)}
           isProcessing={progress.status === 'processing'}
           qrPreviewUrl={qrPreviews[activeQRId]}
@@ -591,6 +595,15 @@ export default function Home() {
         onClose={() => setIsModalOpen(false)}
         onDownload={handleDownload}
         fileName={documentInfo?.name || 'Dokument A5'}
+      />
+
+      {/* 5. Amazon KDP & ePUB Publishing Studio Modal */}
+      <KdpEpubExportModal
+        isOpen={isKdpModalOpen}
+        onClose={() => setIsKdpModalOpen(false)}
+        documentInfo={documentInfo}
+        pdfDocProxy={pdfDocProxy}
+        qrItems={qrItems}
       />
     </div>
   );
