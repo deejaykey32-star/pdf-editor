@@ -43,8 +43,9 @@ export async function generateEpubPackage({
 </container>`;
   zip.file('META-INF/container.xml', containerXml);
 
-  // 3. OEBPS/styles/stylesheet.css (Strictly 12pt for body and all headings, no margin overflow)
-  const stylesheetCss = `/* Standard EPUB 3 Stylesheet - Strictly 12pt Justified Layout for Amazon KDP eBook */
+  // 3. OEBPS/styles/stylesheet.css (Customizable font size, full text justification, no margin overflow)
+  const baseFontSizePt = Math.max(7, Math.min(28, config.fontSizePt || 12));
+  const stylesheetCss = `/* Standard EPUB 3 Stylesheet - Justified Layout for Amazon KDP eBook */
 @charset "UTF-8";
 
 * {
@@ -56,7 +57,7 @@ export async function generateEpubPackage({
 
 body {
   font-family: "Georgia", "Times New Roman", "Cambria", serif;
-  font-size: 12pt !important;
+  font-size: ${baseFontSizePt}pt !important;
   line-height: 1.5;
   text-align: justify;
   text-justify: inter-word;
@@ -71,7 +72,7 @@ body {
 
 h1, h2, h3, h4, h5, h6,
 h1.book-title, h1.chapter-title, .day-heading, strong, b {
-  font-size: 12pt !important;
+  font-size: ${baseFontSizePt}pt !important;
   font-weight: bold;
   line-height: 1.4;
 }
@@ -85,7 +86,7 @@ h1.book-title {
 
 p.book-author {
   text-align: center;
-  font-size: 12pt !important;
+  font-size: ${baseFontSizePt}pt !important;
   color: #555;
   margin-bottom: 2em;
 }
@@ -114,7 +115,7 @@ h2 {
 }
 
 p, div, span, section {
-  font-size: 12pt !important;
+  font-size: ${baseFontSizePt}pt !important;
   text-align: justify;
   text-justify: inter-word;
   line-height: 1.5;

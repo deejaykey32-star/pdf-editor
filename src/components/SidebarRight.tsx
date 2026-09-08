@@ -512,31 +512,53 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
                     </label>
 
                     {activeQR.showLabel !== false && (
-                      <div className="flex items-center justify-between pt-1 border-t border-zinc-800 text-[10px] text-zinc-400">
-                        <span>Pozycja etykiety:</span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => onChangeActiveQRConfig({ labelPosition: 'bottom' })}
-                            className={`px-2 py-0.5 rounded border transition ${
-                              (activeQR.labelPosition || 'bottom') === 'bottom'
-                                ? 'bg-blue-600 text-white border-blue-500 font-semibold'
-                                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                            }`}
-                          >
-                            Dół
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onChangeActiveQRConfig({ labelPosition: 'top' })}
-                            className={`px-2 py-0.5 rounded border transition ${
-                              activeQR.labelPosition === 'top'
-                                ? 'bg-blue-600 text-white border-blue-500 font-semibold'
-                                : 'bg-zinc-800 text-zinc-400 border-zinc-700'
-                            }`}
-                          >
-                            Góra
-                          </button>
+                      <div className="space-y-1.5 pt-1 border-t border-zinc-800 text-[10px] text-zinc-400">
+                        <div className="flex items-center justify-between">
+                          <span>Pozycja etykiety:</span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => onChangeActiveQRConfig({ labelPosition: 'bottom' })}
+                              className={`px-2 py-0.5 rounded border transition ${
+                                (activeQR.labelPosition || 'bottom') === 'bottom'
+                                  ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                              }`}
+                            >
+                              Dół
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onChangeActiveQRConfig({ labelPosition: 'top' })}
+                              className={`px-2 py-0.5 rounded border transition ${
+                                activeQR.labelPosition === 'top'
+                                  ? 'bg-blue-600 text-white border-blue-500 font-semibold'
+                                  : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                              }`}
+                            >
+                              Góra
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <span>Wielkość czcionki:</span>
+                          <div className="flex items-center gap-1">
+                            {[6, 7, 8, 9, 10, 12].map((size) => (
+                              <button
+                                key={size}
+                                type="button"
+                                onClick={() => onChangeActiveQRConfig({ labelFontSize: size })}
+                                className={`px-1.5 py-0.5 rounded border text-[9px] transition ${
+                                  (activeQR.labelFontSize || 8) === size
+                                    ? 'bg-blue-600 text-white border-blue-500 font-bold'
+                                    : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-zinc-600'
+                                }`}
+                              >
+                                {size}pt
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
                     )}

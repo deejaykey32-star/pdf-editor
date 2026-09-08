@@ -478,18 +478,56 @@ async function runTests() {
   console.log(`   ✓ Sprawdzono ${lines.length} linii: ŻADEN wyraz nie nakłada się na inny wyraz!`);
   console.log(`   ✓ Wszystkie odstępy między wyrazami są w 100% dodatnie i bezpieczne.\n`);
 
-  // Test 3: Verify ePUB package
-  console.log('[3/3] Testowanie generatora ePUB 3.0...');
+  // Test 2c: Verify CUSTOMIZABLE font sizes (10 pt, 11 pt, 12 pt, 14 pt)
+  console.log('[7/7] Sprawdzanie dynamicznej zmiany wielkości czcionki (10 pt, 11 pt, 12 pt, 14 pt)...');
+  for (const testSize of [10, 11, 12, 14]) {
+    const testLineH = Math.round(testSize * 1.333 * 10) / 10;
+    const testSpace = font.widthOfTextAtSize(' ', testSize);
+
+    const testWords = ['Rozważanie', 'na', 'temat', 'tajemnicy', 'stworzenia', 'świata', 'czterech', 'tomów', 'modlitwy'];
+    let curLineWords = [];
+    let curLineWidth = 0;
+    const testLines = [];
+
+    for (const w of testWords) {
+      const wW = font.widthOfTextAtSize(w, testSize);
+      if (curLineWidth + wW + curLineWords.length * testSpace <= colWidth || curLineWords.length === 0) {
+        curLineWords.push({ text: w, width: wW });
+        curLineWidth += wW;
+      } else {
+        testLines.push(curLineWords);
+        curLineWords = [{ text: w, width: wW }];
+        curLineWidth = wW;
+      }
+    }
+    if (curLineWords.length > 0) testLines.push(curLineWords);
+
+    for (const lWords of testLines) {
+      let curX = leftX;
+      for (const item of lWords) {
+        if (curX + item.width > leftX + colWidth + 0.1) {
+          throw new Error(`Test FAILED: Wyraz przekroczył margines dla czcionki ${testSize} pt!`);
+        }
+        curX += item.width + testSpace;
+      }
+    }
+    console.log(`   ✓ Rozmiar czcionki ${testSize} pt (interlinia ${testLineH} pt): poprawnie podzielono na ${testLines.length} linii.`);
+  }
+  console.log('   ✓ Pomyślnie zweryfikowano obsługę dynamicznych rozmiarów czcionek.\n');
+
+  // Test 3: Verify ePUB package with custom font size
+  console.log('[3/3] Testowanie generatora ePUB 3.0 z dynamiczną wielkością czcionki...');
+  const customEpubSize = 11;
   const zip = new JSZip();
   zip.file('mimetype', 'application/epub+zip', { compression: 'STORE' });
   zip.file(
     'OEBPS/styles/stylesheet.css',
     `* { box-sizing: border-box; max-width: 100%; word-wrap: break-word; }
-body, p, h1, h2, h3 { font-size: 12pt !important; text-align: justify; }`
+body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: justify; }`
   );
 
   const epubBytes = await zip.generateAsync({ type: 'uint8array', mimeType: 'application/epub+zip' });
-  console.log(`   ✓ Pakiet ePUB wygenerowany pomyślnie (${epubBytes.length} bajtów) ze ścisłą regułą 12pt.`);
+  console.log(`   ✓ Pakiet ePUB wygenerowany pomyślnie (${epubBytes.length} bajtów) z wybranym rozmiarem ${customEpubSize}pt.`);
 
   console.log('\n================================================================');
   console.log('🎉 WSZYSTKIE TESTY ZAKOŃCZONE SUKCESEM!');

@@ -161,14 +161,16 @@ eMBiK365`
   // Handlers for Exports
   const handleExportKdpPdf = async () => {
     if (!bookModel && kdpConfig.mode === 'typeset') return;
+    const currentFontSize = kdpConfig.fontSizePt || 12;
     setIsExporting(true);
-    setExportProgress({ current: 0, total: 100, stage: 'Inicjalizacja składu typograficznego KDP (format 12 pt)...' });
+    setExportProgress({ current: 0, total: 100, stage: `Inicjalizacja składu typograficznego KDP (format ${currentFontSize} pt)...` });
 
     try {
       const pdfBytes = await generateKdpA5PrintPdf({
         config: {
           ...kdpConfig,
-          fontSizePt: 12, // Strictly 12 pt
+          fontSizePt: currentFontSize,
+          lineHeightPt: kdpConfig.lineHeightPt || Math.round(currentFontSize * 1.333 * 10) / 10,
           excludedPatterns: excludedPatternsList,
         },
         bookModel: bookModel || {
@@ -194,7 +196,9 @@ eMBiK365`
       const a = document.createElement('a');
       a.href = blobUrl;
       const cleanName = (kdpConfig.bookTitle || 'ksiazka').replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ_-]/g, '_');
-      const suffix = kdpConfig.bleed === 'kdp-standard' ? '_KDP_A5_Bleed_12pt_Print' : '_KDP_A5_12pt_Print';
+      const suffix = kdpConfig.bleed === 'kdp-standard'
+        ? `_KDP_A5_Bleed_${currentFontSize}pt_Print`
+        : `_KDP_A5_${currentFontSize}pt_Print`;
       a.download = `${cleanName}${suffix}.pdf`;
       document.body.appendChild(a);
       a.click();
@@ -210,14 +214,15 @@ eMBiK365`
 
   const handleExportEpub = async () => {
     if (!bookModel) return;
+    const currentFontSize = epubConfig.fontSizePt || 12;
     setIsExporting(true);
-    setExportProgress({ current: 0, total: 100, stage: 'Generowanie pakietu ePUB 3.0 (format 12 pt)...' });
+    setExportProgress({ current: 0, total: 100, stage: `Generowanie pakietu ePUB 3.0 (format ${currentFontSize} pt)...` });
 
     try {
       const epubBytes = await generateEpubPackage({
         config: {
           ...epubConfig,
-          fontSizePt: 12, // Strictly 12 pt
+          fontSizePt: currentFontSize,
           excludedPatterns: excludedPatternsList,
         },
         bookModel,
@@ -236,7 +241,7 @@ eMBiK365`
       const a = document.createElement('a');
       a.href = blobUrl;
       const cleanName = (epubConfig.title || 'ksiazka').replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ_-]/g, '_');
-      a.download = `${cleanName}_KDP_eBook_12pt.epub`;
+      a.download = `${cleanName}_KDP_eBook_${currentFontSize}pt.epub`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -502,30 +507,99 @@ eMBiK365`
                   </div>
                 </div>
 
-                {/* 3. Typografia & Formatowanie tekstu (Wszystkie czcionki 12 pt, Obustronne Justowanie) */}
+                {/* 3. Typografia & Formatowanie tekstu (Regulacja Wielkości Czcionki, Obustronne Justowanie) */}
                 <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
                       <AlignJustify className="w-3.5 h-3.5 text-emerald-400" />
-                      Typografia: Wszystkie Czcionki 12 pt & Ochrona Marginesów
+                      Typografia: Wielkość Czcionki & Ochrona Marginesów
                     </label>
                     <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20 font-semibold flex items-center gap-1">
                       <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                      12 pt Bez Wychodzenia poza Marginesy
+                      {kdpConfig.fontSizePt || 12} pt – 100% Ochrona Marginesów
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Tekst i Nagłówki:</div>
-                      <div className="font-semibold text-emerald-400 text-sm mt-0.5">Ściśle 12 pt</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Nagłówki 12 pt Bold | Treść 12 pt Regular</div>
+                  {/* Font Size Controller */}
+                  <div className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-semibold text-zinc-200">Wielkość czcionki publikacji:</span>
+                        <div className="text-[10px] text-zinc-400">
+                          Format tekstu i nagłówków (rekomendowane 10–12 pt dla książek A5)
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="7"
+                          max="24"
+                          step="0.5"
+                          value={kdpConfig.fontSizePt || 12}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 12;
+                            setKdpConfig((prev) => ({
+                              ...prev,
+                              fontSizePt: val,
+                              lineHeightPt: Math.round(val * 1.333 * 10) / 10,
+                            }));
+                          }}
+                          className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-center font-bold text-emerald-400 focus:border-emerald-500 focus:outline-none"
+                        />
+                        <span className="text-xs font-semibold text-zinc-400">pt</span>
+                      </div>
                     </div>
 
-                    <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Granice Kolumny:</div>
-                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">100% Ochrona Marginesów</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Dzielenie słów i blokada overflow</div>
+                    {/* Quick Preset Buttons */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-zinc-500 mr-1">Szybki wybór:</span>
+                      {[9, 10, 10.5, 11, 11.5, 12, 13, 14].map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() =>
+                            setKdpConfig((prev) => ({
+                              ...prev,
+                              fontSizePt: size,
+                              lineHeightPt: Math.round(size * 1.333 * 10) / 10,
+                            }))
+                          }
+                          className={`px-2 py-1 rounded text-xs transition font-medium ${
+                            (kdpConfig.fontSizePt || 12) === size
+                              ? 'bg-emerald-600 text-white font-bold shadow'
+                              : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-600'
+                          }`}
+                        >
+                          {size} pt {size === 12 && '(Domyślna)'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Range Slider */}
+                    <div className="pt-1 flex items-center gap-3">
+                      <span className="text-[10px] text-zinc-500 w-8">8 pt</span>
+                      <input
+                        type="range"
+                        min="8"
+                        max="18"
+                        step="0.5"
+                        value={kdpConfig.fontSizePt || 12}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value) || 12;
+                          setKdpConfig((prev) => ({
+                            ...prev,
+                            fontSizePt: val,
+                            lineHeightPt: Math.round(val * 1.333 * 10) / 10,
+                          }));
+                        }}
+                        className="flex-1 accent-emerald-500 h-1.5 bg-zinc-700 rounded-lg cursor-pointer"
+                      />
+                      <span className="text-[10px] text-zinc-500 w-8 text-right">18 pt</span>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400 flex items-center justify-between pt-1 border-t border-zinc-800/80">
+                      <span>Interlinia (Line Height): <strong className="text-zinc-200">{kdpConfig.lineHeightPt || Math.round((kdpConfig.fontSizePt || 12) * 1.333 * 10) / 10} pt</strong></span>
+                      <span>Układ: <strong className="text-zinc-200">Obustronne Justowanie</strong></span>
                     </div>
                   </div>
 
@@ -656,21 +730,81 @@ eMBiK365`
                 </div>
 
                 <div className="bg-zinc-900/70 border border-zinc-800 rounded-lg p-4 space-y-3">
-                  <label className="text-xs font-semibold text-zinc-200 block">
-                    Typografia Czytnika Cyfrowego (Ściśle 12 pt)
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-zinc-200 block">
+                      Typografia Czytnika Cyfrowego (ePUB 3.0)
+                    </label>
+                    <span className="text-[10px] bg-indigo-500/10 text-indigo-400 px-2 py-0.5 rounded border border-indigo-500/20 font-semibold">
+                      Rozmiar bazowy: {epubConfig.fontSizePt || 12} pt
+                    </span>
+                  </div>
 
-                  <div className="grid grid-cols-2 gap-3 text-xs">
-                    <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Wszystkie Czcionki i Nagłówki:</div>
-                      <div className="font-semibold text-indigo-400 text-sm mt-0.5">12 pt (1em)</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Jednolity format 12pt dla całej treści</div>
+                  {/* ePUB Font Size Controller */}
+                  <div className="bg-zinc-800/40 p-3 rounded-lg border border-zinc-800 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-semibold text-zinc-200">Bazowa wielkość czcionki w czytniku:</span>
+                        <div className="text-[10px] text-zinc-400">
+                          Domyślny rozmiar tekstu w stylach CSS dla czytników Kindle i Apple Books
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          min="7"
+                          max="24"
+                          step="0.5"
+                          value={epubConfig.fontSizePt || 12}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 12;
+                            setEpubConfig((prev) => ({ ...prev, fontSizePt: val }));
+                          }}
+                          className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs text-center font-bold text-indigo-400 focus:border-indigo-500 focus:outline-none"
+                        />
+                        <span className="text-xs font-semibold text-zinc-400">pt</span>
+                      </div>
                     </div>
 
-                    <div className="bg-zinc-800/40 p-2.5 rounded border border-zinc-800">
-                      <div className="text-zinc-400 text-[11px]">Wyrównanie CSS:</div>
-                      <div className="font-semibold text-zinc-200 text-sm mt-0.5">text-align: justify</div>
-                      <div className="text-[10px] text-zinc-500 mt-0.5">Wraz z automatycznym dzieleniem wyrazów</div>
+                    {/* Quick Preset Buttons for ePUB */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] text-zinc-500 mr-1">Szybki wybór:</span>
+                      {[9, 10, 10.5, 11, 11.5, 12, 13, 14, 16].map((size) => (
+                        <button
+                          key={size}
+                          type="button"
+                          onClick={() => setEpubConfig((prev) => ({ ...prev, fontSizePt: size }))}
+                          className={`px-2 py-1 rounded text-xs transition font-medium ${
+                            (epubConfig.fontSizePt || 12) === size
+                              ? 'bg-indigo-600 text-white font-bold shadow'
+                              : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-600'
+                          }`}
+                        >
+                          {size} pt {size === 12 && '(Domyślna)'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Range Slider for ePUB */}
+                    <div className="pt-1 flex items-center gap-3">
+                      <span className="text-[10px] text-zinc-500 w-8">8 pt</span>
+                      <input
+                        type="range"
+                        min="8"
+                        max="18"
+                        step="0.5"
+                        value={epubConfig.fontSizePt || 12}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          setEpubConfig((prev) => ({ ...prev, fontSizePt: val }));
+                        }}
+                        className="flex-1 accent-indigo-500 h-1.5 bg-zinc-700 rounded-lg cursor-pointer"
+                      />
+                      <span className="text-[10px] text-zinc-500 w-8 text-right">18 pt</span>
+                    </div>
+
+                    <div className="text-[10px] text-zinc-400 flex items-center justify-between pt-1 border-t border-zinc-800/80">
+                      <span>Wyrównanie CSS: <strong className="text-zinc-200">text-align: justify</strong></span>
+                      <span>Dzielenie słów: <strong className="text-zinc-200">hyphens: auto</strong></span>
                     </div>
                   </div>
 
@@ -813,9 +947,15 @@ eMBiK365`
                     </div>
                   )}
 
-                  {/* Sample 12pt Justified Paragraphs */}
-                  <div className="space-y-1.5 text-justify" style={{ fontSize: '8px', lineHeight: '1.3' }}>
-                    <div className="font-bold text-[8.5px] text-zinc-900 mb-1 text-left">
+                  {/* Sample Justified Paragraphs */}
+                  <div
+                    className="space-y-1.5 text-justify"
+                    style={{
+                      fontSize: `${Math.max(6, Math.min(14, ((kdpConfig.fontSizePt || 12) / 12) * 8))}px`,
+                      lineHeight: '1.35',
+                    }}
+                  >
+                    <div className="font-bold text-zinc-900 mb-1 text-left" style={{ fontSize: `${Math.max(6.5, Math.min(15, ((kdpConfig.fontSizePt || 12) / 12) * 8.5))}px` }}>
                       {bookModel?.chapters[0]?.title || 'Wstęp'}
                     </div>
                     {bookModel?.chapters[0]?.paragraphs?.filter((p) => !p.isHeading).length ? (
@@ -830,7 +970,7 @@ eMBiK365`
                     ) : (
                       <>
                         <p className="text-zinc-800 indent-2">
-                          Wszystkie czcionki w tym nagłówki są w formacie <strong>12 pt</strong>. Układ kolumny tekstu posiada matematyczną ochronę marginesów zapobiegającą jakiemukolwiek wychodzeniu wyrazów poza krawędzie strony.
+                          Tekst i nagłówki są w formacie <strong>{kdpConfig.fontSizePt || 12} pt</strong>. Układ kolumny tekstu posiada matematyczną ochronę marginesów zapobiegającą jakiemukolwiek wychodzeniu wyrazów poza krawędzie strony.
                         </p>
                         <p className="text-zinc-800 indent-2">
                           Niepożądane fragmenty stopek i nagłówków zostały automatycznie wycięte z dokumentu źródłowego.
@@ -858,8 +998,14 @@ eMBiK365`
                   {epubConfig.title || 'eBook Reader'}
                 </div>
 
-                <div className="my-auto space-y-2 text-justify" style={{ fontSize: '8.5px', lineHeight: '1.4' }}>
-                  <h2 className="font-bold text-[9px] text-center text-zinc-900 mb-1.5 pb-1 border-b border-zinc-300">
+                <div
+                  className="my-auto space-y-2 text-justify"
+                  style={{
+                    fontSize: `${Math.max(6.5, Math.min(14, ((epubConfig.fontSizePt || 12) / 12) * 8.5))}px`,
+                    lineHeight: '1.4',
+                  }}
+                >
+                  <h2 className="font-bold text-center text-zinc-900 mb-1.5 pb-1 border-b border-zinc-300" style={{ fontSize: `${Math.max(7, Math.min(15, ((epubConfig.fontSizePt || 12) / 12) * 9))}px` }}>
                     {bookModel?.chapters[0]?.title || 'Wstęp'}
                   </h2>
                   {bookModel?.chapters[0]?.paragraphs?.filter((p) => !p.isHeading).length ? (
@@ -874,7 +1020,7 @@ eMBiK365`
                   ) : (
                     <>
                       <p className="indent-2 text-zinc-800">
-                        Treść oraz nagłówki zostały sformatowane w formacie 12 pt z pełnym wyjustowaniem i wycięciem powtarzających się stopek.
+                        Treść oraz nagłówki zostały sformatowane w wybranym formacie <strong>{epubConfig.fontSizePt || 12} pt</strong> z pełnym wyjustowaniem i wycięciem powtarzających się stopek.
                       </p>
                       <p className="indent-2 text-zinc-800">
                         Tekst dopasowuje się do ekranu bez wychodzenia poza marginesy czytnika Kindle i iPad.
@@ -885,7 +1031,7 @@ eMBiK365`
 
                 <div className="flex justify-between items-center text-[7.5px] text-zinc-400 pt-2 border-t border-zinc-200">
                   <span>Rozdział 1 z {bookModel?.chapters.length || 1}</span>
-                  <span>Ściśle 12 pt Justify</span>
+                  <span>{epubConfig.fontSizePt || 12} pt Justify</span>
                 </div>
               </div>
             )}

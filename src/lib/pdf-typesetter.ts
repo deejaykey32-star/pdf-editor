@@ -272,9 +272,11 @@ export async function generateKdpA5PrintPdf({
   const columnWidthPt = A5_WIDTH_PT - gutterPt - outerPt;
   const columnHeightPt = A5_HEIGHT_PT - topPt - bottomPt;
 
-  // Strict 12pt formatting across all text & headings
-  const FONT_SIZE_12PT = 12;
-  const LINE_HEIGHT_16PT = 16;
+  // Customizable font size & proportional line height (defaults to 12pt / 16pt)
+  const fontSizePt = Math.max(7, Math.min(28, config.fontSizePt || 12));
+  const lineHeightPt = config.lineHeightPt && config.lineHeightPt > 0
+    ? config.lineHeightPt
+    : Math.round(fontSizePt * 1.333 * 10) / 10;
   const firstLineIndentPt = mmToPt(config.firstLineIndentMm || 5);
 
   // ----------------------------------------------------
@@ -455,26 +457,26 @@ export async function generateKdpA5PrintPdf({
     const titleLines = breakParagraphIntoJustifiedLines(
       cleanBookTitle,
       boldFont,
-      FONT_SIZE_12PT,
+      fontSizePt,
       columnWidthPt,
       0
     );
 
     for (const tl of titleLines) {
       let curX = leftXFirst;
-      const spaceW = getWordWidth(boldFont, ' ', FONT_SIZE_12PT);
+      const spaceW = getWordWidth(boldFont, ' ', fontSizePt);
       for (const w of tl.words) {
-        const wW = getWordWidth(boldFont, w, FONT_SIZE_12PT);
+        const wW = getWordWidth(boldFont, w, fontSizePt);
         safeDrawText(currentPage!, w, {
           x: curX,
           y: cursorY,
-          size: FONT_SIZE_12PT,
+          size: fontSizePt,
           font: boldFont,
           color: rgb(0.1, 0.1, 0.15),
         });
         curX += wW + spaceW;
       }
-      cursorY -= LINE_HEIGHT_16PT;
+      cursorY -= lineHeightPt;
     }
 
     if (isAuthorValid) {
@@ -482,7 +484,7 @@ export async function generateKdpA5PrintPdf({
       safeDrawText(currentPage!, cleanAuthor, {
         x: leftXFirst,
         y: cursorY,
-        size: FONT_SIZE_12PT,
+        size: fontSizePt,
         font: regularFont,
         color: rgb(0.35, 0.35, 0.4),
       });
@@ -528,34 +530,34 @@ export async function generateKdpA5PrintPdf({
     const curIsOdd = (currentPageNumber - 1) % 2 !== 0;
     const curLeftX = bleedPt + (curIsOdd ? gutterPt : outerPt);
 
-    // Chapter Header (strictly 12pt bold, wrapped to prevent margin overflow)
+    // Chapter Header (bold, wrapped to prevent margin overflow)
     cursorY -= 15;
     const chapterHeadingLines = breakParagraphIntoJustifiedLines(
       cleanChapterTitle,
       boldFont,
-      FONT_SIZE_12PT,
+      fontSizePt,
       columnWidthPt,
       0
     );
 
     for (const chLine of chapterHeadingLines) {
-      if (cursorY - LINE_HEIGHT_16PT < bottomPt + 5) {
+      if (cursorY - lineHeightPt < bottomPt + 5) {
         startNewPage();
       }
       let curX = curLeftX;
-      const spaceW = getWordWidth(boldFont, ' ', FONT_SIZE_12PT);
+      const spaceW = getWordWidth(boldFont, ' ', fontSizePt);
       for (const w of chLine.words) {
-        const wW = getWordWidth(boldFont, w, FONT_SIZE_12PT);
+        const wW = getWordWidth(boldFont, w, fontSizePt);
         safeDrawText(currentPage!, w, {
           x: curX,
           y: cursorY,
-          size: FONT_SIZE_12PT,
+          size: fontSizePt,
           font: boldFont,
           color: rgb(0.1, 0.15, 0.25),
         });
         curX += wW + spaceW;
       }
-      cursorY -= LINE_HEIGHT_16PT;
+      cursorY -= lineHeightPt;
     }
 
     // Small divider under chapter heading
@@ -593,7 +595,7 @@ export async function generateKdpA5PrintPdf({
       const justifiedLines = breakParagraphIntoJustifiedLines(
         cleanParaText,
         pFont,
-        FONT_SIZE_12PT,
+        fontSizePt,
         columnWidthPt,
         indentPt
       );
@@ -602,7 +604,7 @@ export async function generateKdpA5PrintPdf({
         const line = justifiedLines[lIdx];
 
         // Ensure vertical margin is strictly respected
-        if (cursorY - LINE_HEIGHT_16PT < bottomPt + 5) {
+        if (cursorY - lineHeightPt < bottomPt + 5) {
           startNewPage();
         }
 
@@ -611,7 +613,7 @@ export async function generateKdpA5PrintPdf({
         const startX = lineLeftMargin + line.firstLineIndent;
         // Right margin boundary of printable column (lineLeftMargin + columnWidthPt)
         const maxLineRightX = lineLeftMargin + columnWidthPt;
-        const standardSpace = getWordWidth(pFont, ' ', FONT_SIZE_12PT);
+        const standardSpace = getWordWidth(pFont, ' ', fontSizePt);
         const minWordGap = Math.max(2.0, standardSpace * 0.35);
 
         // Render line
@@ -622,7 +624,7 @@ export async function generateKdpA5PrintPdf({
 
           for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
             const word = line.words[wIdx];
-            const wWidth = getWordWidth(pFont, word, FONT_SIZE_12PT);
+            const wWidth = getWordWidth(pFont, word, fontSizePt);
 
             // Word must NEVER start before previous word ends + min gap (guarantee zero overlap!)
             const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
@@ -636,7 +638,7 @@ export async function generateKdpA5PrintPdf({
             safeDrawText(currentPage!, word, {
               x: drawX,
               y: cursorY,
-              size: FONT_SIZE_12PT,
+              size: fontSizePt,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
@@ -662,7 +664,7 @@ export async function generateKdpA5PrintPdf({
 
           for (let wIdx = 0; wIdx < line.words.length; wIdx++) {
             const word = line.words[wIdx];
-            const wWidth = getWordWidth(pFont, word, FONT_SIZE_12PT);
+            const wWidth = getWordWidth(pFont, word, fontSizePt);
 
             // Word must NEVER start before previous word ends + min gap (guarantee zero overlap!)
             const minX = wIdx === 0 ? startX : prevWordEndX + minWordGap;
@@ -676,7 +678,7 @@ export async function generateKdpA5PrintPdf({
             safeDrawText(currentPage!, word, {
               x: drawX,
               y: cursorY,
-              size: FONT_SIZE_12PT,
+              size: fontSizePt,
               font: pFont,
               color: rgb(0.12, 0.12, 0.12),
             });
@@ -686,7 +688,7 @@ export async function generateKdpA5PrintPdf({
           }
         }
 
-        cursorY -= LINE_HEIGHT_16PT;
+        cursorY -= lineHeightPt;
       }
 
       cursorY -= paragraph.isHeading ? 8 : 4;

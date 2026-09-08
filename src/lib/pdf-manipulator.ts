@@ -61,7 +61,7 @@ function drawQRWithLinkAndLabel({
 
   const isLabelVisible = Boolean(item.showLabel && resolvedLabel);
   const labelPos = item.labelPosition || 'bottom';
-  const labelFontSize = 8;
+  const labelFontSize = item.labelFontSize && item.labelFontSize > 0 ? item.labelFontSize : 8;
   let labelY = qrDrawY - labelFontSize - 2;
 
   if (isLabelVisible) {
