@@ -244,11 +244,11 @@ nav#toc a {
   for (let idx = 0; idx < bookModel.chapters.length; idx++) {
     const chapter = bookModel.chapters[idx];
     let cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
-    if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
-      cleanChapterTitle = 'Wstęp';
+    if (/^wst[eę]p\b/i.test(cleanChapterTitle) || chapter.id === 'ch-intro') {
+      cleanChapterTitle = 'Wprowadzenie';
     }
     if (!cleanChapterTitle && chapter.paragraphs.length > 0) {
-      cleanChapterTitle = idx === 0 ? 'Wstęp' : `Rozdział ${idx + 1}`;
+      cleanChapterTitle = idx === 0 ? 'Wprowadzenie' : `Dzień ${idx}`;
     }
     if (!cleanChapterTitle) continue;
 
@@ -262,12 +262,17 @@ nav#toc a {
     for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
       const p = chapter.paragraphs[pIdx];
       let cleanParaText = sanitizeExtractedText(p.text, config.excludedPatterns);
-      if (p.isHeading && /^wst[eę]p\b/i.test(cleanParaText)) {
-        cleanParaText = 'Wstęp';
+      if (p.isHeading && (/^wst[eę]p\b/i.test(cleanParaText) || cleanParaText === 'Wprowadzenie')) {
+        cleanParaText = 'Wprowadzenie';
       }
       if (!cleanParaText || cleanParaText.length <= 1) continue;
 
-      if (renderedParasCount === 0 && p.isHeading && (cleanParaText === cleanChapterTitle || cleanParaText === 'Wstęp')) {
+      if (
+        renderedParasCount === 0 &&
+        p.isHeading &&
+        (cleanParaText === cleanChapterTitle ||
+          (cleanParaText === 'Wprowadzenie' && cleanChapterTitle === 'Wprowadzenie'))
+      ) {
         continue;
       }
 

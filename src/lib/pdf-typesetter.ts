@@ -509,14 +509,14 @@ export async function generateKdpA5PrintPdf({
     const chapter = bookModel.chapters[chIdx];
     let cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
 
-    // Normalize "Wstęp do..." into clean "Wstęp"
-    if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
-      cleanChapterTitle = 'Wstęp';
+    // Normalize "Wstęp" or "Wstęp do..." into clean "Wprowadzenie"
+    if (/^wst[eę]p\b/i.test(cleanChapterTitle) || chapter.id === 'ch-intro') {
+      cleanChapterTitle = 'Wprowadzenie';
     }
 
     // If title was stripped by filters, fallback to default title if chapter has paragraphs
     if (!cleanChapterTitle && chapter.paragraphs.length > 0) {
-      cleanChapterTitle = chIdx === 0 ? 'Wstęp' : `Rozdział ${chIdx + 1}`;
+      cleanChapterTitle = chIdx === 0 ? 'Wprowadzenie' : `Dzień ${chIdx}`;
     }
 
     // Skip empty or noise chapters

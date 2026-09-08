@@ -148,12 +148,13 @@ export function sanitizeExtractedText(
   // 1. Separate and deduplicate overlapping text artifacts and consecutive repeated phrases
   cleaned = deduplicateOverlappingText(cleaned);
 
-  // 2. Transform long specific headings into "Wstęp" as requested
+  // 2. Transform long specific headings into "Wprowadzenie" as requested
   cleaned = cleaned.replace(
     /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
-    'Wstęp'
+    'Wprowadzenie'
   );
-  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
+  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wprowadzenie');
+  cleaned = cleaned.replace(/^Wst[eę]p$/gi, 'Wprowadzenie');
 
   // 3. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
   cleaned = deduplicateDayHeading(cleaned);
@@ -186,6 +187,96 @@ export function sanitizeExtractedText(
     .trim();
 
   return cleaned;
+}
+
+export interface DayHeadingInfo {
+  isDay: boolean;
+  dayNum: number;
+  fullTitle: string;
+}
+
+/**
+ * Accurately detects and parses a true Day heading (Dzień 1 to Dzień 175),
+ * deduplicating internal repeated "Dzień X" phrases.
+ */
+export function parseDayHeading(text: string): DayHeadingInfo | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+
+  // Match line starting with:
+  // "DZIEŃ 1 — 25 GRUDNIA..."
+  // "Dzień 1: Stworzenie..."
+  // "— Dzień 1 — ..."
+  // "DZIEŃ 175"
+  const match = trimmed.match(/^[-—–(]*\s*(?:dzie[nń])\s*(\d{1,3})\b(?:\s*[-—–:]|\s+|$)/i);
+  if (!match) return null;
+
+  const num = parseInt(match[1], 10);
+  if (isNaN(num) || num < 1 || num > 175) return null;
+
+  return {
+    isDay: true,
+    dayNum: num,
+    fullTitle: deduplicateDayHeading(trimmed),
+  };
+}
+
+/**
+ * Validates whether a line of text is a true in-chapter subheading
+ * (e.g. "Część 1", "Tajemnica 1", "Etap 1", "Rozważanie", "Modlitwa", "Akt strzelisty")
+ * without misclassifying regular sentences or all-caps prayer responses/refrains.
+ */
+export function isInChapterHeading(text: string, fontSize: number = 12, isUpper: boolean = false): boolean {
+  if (!text) return false;
+  const trimmed = text.trim();
+
+  // 1. A heading must NEVER end with sentence punctuation: . , ;
+  if (/[.,;]$/.test(trimmed)) {
+    return false;
+  }
+
+  // 2. Headings are concise titles (<= 8 words and <= 70 chars)
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 8 || trimmed.length > 70) {
+    return false;
+  }
+
+  // 3. Known structural labels in daily readings
+  const isStructural =
+    /^\s*(?:etap\s*\d+|część\s*\d+|tajemnica\s*\d+|rozważanie(?:\s+[a-ząćęłńóśźż]+)?|modlitwa(?:\s+[a-ząćęłńóśźż]+)?|akt\s+[a-ząćęłńóśźż]+|wezwanie(?:\s+[a-ząćęłńóśźż]+)?|czytanie\s*\d*|psalm\s*\d*|pieśń\s*\d*)\b/i.test(trimmed);
+
+  if (isStructural) {
+    return true;
+  }
+
+  // 4. Standalone uppercase title (e.g. "ROZWAŻANIE", "TAJEMNICA 1", "MODLITWA")
+  if (isUpper && words.length <= 4 && trimmed.length <= 35) {
+    const prayerPhrases = [
+      'AMEN',
+      'ALLELUJA',
+      'BOGU NIECH BĘDĄ DZIĘKI',
+      'CHWAŁA OJCU',
+      'ŚWIĘTY BOŻE',
+      'JEZU UFAM TOBIE',
+      'ZMIŁUJ SIĘ NAD NAMI',
+      'WYSŁUCHAJ NAS PANIE',
+      'MÓDL SIĘ ZA NAMI',
+      'POD TWOJĄ OBRONĘ',
+      'OJCZE NASZ',
+      'ZDROWAŚ MARYJO',
+      'WIERZĘ W BOGA',
+    ];
+    const upperClean = trimmed.replace(/[^A-ZĄĆĘŁŃÓŚŹŻ\s]/g, '').trim();
+    if (prayerPhrases.some((p) => upperClean.includes(p) || p.includes(upperClean))) {
+      return false;
+    }
+
+    if (/^(?:WSTĘP|WPROWADZENIE|ROZWAŻANIE|MODLITWA|TAJEMNICA|ETAP|CZĘŚĆ|ZAKOŃCZENIE|DODATEK)$/i.test(upperClean)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export interface ExtractBookOptions {
@@ -228,9 +319,10 @@ export async function extractBookContentFromPdf(
 
   const numPages = proxy.numPages;
   const chapters: ExtractedChapter[] = [];
+  let currentDayNumber = 0; // 0 = Wprowadzenie, 1..175 = Dzień 1..175
   let currentChapter: ExtractedChapter = {
-    id: 'ch-1',
-    title: 'Wstęp',
+    id: 'ch-intro',
+    title: 'Wprowadzenie',
     paragraphs: [],
     pageRange: { start: 1, end: 1 },
   };
@@ -248,7 +340,22 @@ export async function extractBookContentFromPdf(
 
   const flushParagraph = (isHeading: boolean = false, headingLvl: number = 1, fSize: number = 12) => {
     if (paragraphBuffer.length === 0) return;
-    const fullText = paragraphBuffer.join(' ').replace(/\s+/g, ' ').trim();
+
+    // Join buffer lines: handle hyphenated words across line breaks
+    let fullText = '';
+    for (const lineStr of paragraphBuffer) {
+      const trimmed = lineStr.trim();
+      if (!trimmed) continue;
+      if (fullText.length === 0) {
+        fullText = trimmed;
+      } else if (fullText.endsWith('-') && !fullText.endsWith(' -')) {
+        // Hyphenated word across line break: join without space
+        fullText = fullText.slice(0, -1) + trimmed;
+      } else {
+        fullText += ' ' + trimmed;
+      }
+    }
+
     paragraphBuffer = [];
     const cleaned = sanitizeExtractedText(fullText, customPatterns);
     if (!cleaned || cleaned.length <= 1) return;
@@ -256,13 +363,12 @@ export async function extractBookContentFromPdf(
     const words = cleaned.split(/\s+/).length;
     totalWordsCount += words;
 
-    const isDayHeading = /\b(?:dzie[nń])\s*\d+\b/i.test(cleaned);
     currentChapter.paragraphs.push({
       text: cleaned,
-      isHeading: isHeading || isDayHeading,
-      headingLevel: isHeading ? headingLvl : (isDayHeading ? 2 : 0),
+      isHeading: false,
+      headingLevel: 0,
       fontSize: 12, // Strictly 12pt format
-      isBold: isHeading || isDayHeading,
+      isBold: false,
     });
   };
 
@@ -314,15 +420,14 @@ export async function extractBookContentFromPdf(
         const bucket = spatialBuckets.get(b);
         if (!bucket) continue;
         for (const existing of bucket) {
-          if (Math.abs(existing.y - item.y) <= 1.5 && Math.abs(existing.x - item.x) <= 2.5) {
-            if (
-              existing.str.trim() === item.str.trim() ||
-              existing.str.includes(item.str) ||
-              item.str.includes(existing.str)
-            ) {
-              isDuplicateOverlap = true;
-              break;
-            }
+          // Strictly exact trimmed text match at near-identical coordinates (<= 1.2pt Y, <= 2.0pt X)
+          if (
+            Math.abs(existing.y - item.y) <= 1.2 &&
+            Math.abs(existing.x - item.x) <= 2.0 &&
+            existing.str.trim() === item.str.trim()
+          ) {
+            isDuplicateOverlap = true;
+            break;
           }
         }
         if (isDuplicateOverlap) break;
@@ -339,164 +444,183 @@ export async function extractBookContentFromPdf(
       }
     }
 
-    // Sort items top-to-bottom (Y desc), then left-to-right (X asc)
-    nonOverlappingItems.sort((a, b) => {
-      const yDiff = Math.abs(a.y - b.y);
-      if (yDiff <= 3) {
-        return a.x - b.x;
-      }
-      return b.y - a.y;
-    });
+    // 1. Sort items strictly top-to-bottom (Y descending). 100% transitive and stable.
+    nonOverlappingItems.sort((a, b) => b.y - a.y);
 
-    // Group items into lines
-    interface LineGroup {
+    // 2. Cluster items into visual lines
+    interface LineCluster {
+      avgY: number;
+      fontSize: number;
+      items: RawTextItem[];
+    }
+
+    const lineClusters: LineCluster[] = [];
+
+    for (const item of nonOverlappingItems) {
+      const lastLine = lineClusters.length > 0 ? lineClusters[lineClusters.length - 1] : null;
+      const yTolerance = Math.min(3.2, Math.max(1.8, item.fontSize * 0.28));
+
+      if (lastLine && Math.abs(item.y - lastLine.avgY) <= yTolerance) {
+        lastLine.items.push(item);
+        lastLine.avgY = (lastLine.avgY * (lastLine.items.length - 1) + item.y) / lastLine.items.length;
+        lastLine.fontSize = Math.max(lastLine.fontSize, item.fontSize);
+      } else {
+        lineClusters.push({
+          avgY: item.y,
+          fontSize: item.fontSize,
+          items: [item],
+        });
+      }
+    }
+
+    // 3. For each visual line cluster, sort items strictly left-to-right (X ascending)
+    // and assemble line text preserving word boundaries and kerning
+    interface ExtractedLine {
       y: number;
       fontSize: number;
       text: string;
       isUpper: boolean;
     }
 
-    const lines: LineGroup[] = [];
-    let currentLineItems: RawTextItem[] = [];
-    let currentLineY: number | null = null;
+    const lines: ExtractedLine[] = [];
 
-    const pushCleanedLine = (itemsToFlush: RawTextItem[], yCoord: number) => {
-      // Sort items within line strictly from left to right
-      itemsToFlush.sort((a, b) => a.x - b.x);
+    for (const cluster of lineClusters) {
+      cluster.items.sort((a, b) => a.x - b.x);
 
-      // Assemble line text, ensuring touching or overlapping word fragments are cleanly separated by a space
       let lineStr = '';
-      let lastItemX = -999;
-      let lastChunk = '';
+      let prevItem: RawTextItem | null = null;
 
-      for (const it of itemsToFlush) {
-        const chunk = it.str.trim();
+      for (const it of cluster.items) {
+        const chunk = it.str;
         if (!chunk) continue;
 
-        // Deduplicate multi-pass rendering (exact same text rendered at near identical coordinate)
-        if (chunk === lastChunk && Math.abs(it.x - lastItemX) <= 3.0) {
+        // Skip exact duplicate text rendered at virtually identical X coordinate
+        if (prevItem && prevItem.str.trim() === chunk.trim() && Math.abs(it.x - prevItem.x) <= 2.0) {
           continue;
         }
 
         if (lineStr.length === 0) {
           lineStr = chunk;
         } else {
-          lineStr += (lineStr.endsWith(' ') ? '' : ' ') + chunk;
+          const prevEndX = prevItem ? prevItem.x + prevItem.width : 0;
+          const gap = it.x - prevEndX;
+          const needsSpace =
+            !lineStr.endsWith(' ') &&
+            !chunk.startsWith(' ') &&
+            gap >= Math.max(1.8, it.fontSize * 0.18);
+
+          if (needsSpace) {
+            lineStr += ' ' + chunk;
+          } else {
+            lineStr += chunk;
+          }
         }
 
-        lastItemX = it.x;
-        lastChunk = chunk;
+        prevItem = it;
       }
 
-      const rawText = lineStr.replace(/\s+/g, ' ');
+      const rawText = lineStr.replace(/\s+/g, ' ').trim();
       const cleanedText = sanitizeExtractedText(rawText, customPatterns);
-      const maxFont = Math.max(...itemsToFlush.map((i) => i.fontSize));
 
       // Discard empty lines, standalone numbers or lone punctuation
       if (cleanedText.length > 1 && !/^[-—–,.:;]+$/.test(cleanedText)) {
         lines.push({
-          y: yCoord,
-          fontSize: maxFont,
+          y: cluster.avgY,
+          fontSize: cluster.fontSize,
           text: cleanedText,
           isUpper: cleanedText === cleanedText.toUpperCase() && cleanedText.length > 3,
         });
       }
-    };
-
-    for (const item of nonOverlappingItems) {
-      if (currentLineY === null) {
-        currentLineY = item.y;
-        currentLineItems = [item];
-      } else if (Math.abs(item.y - currentLineY) <= 3.5) {
-        currentLineItems.push(item);
-      } else {
-        pushCleanedLine(currentLineItems, currentLineY);
-        currentLineY = item.y;
-        currentLineItems = [item];
-      }
-    }
-
-    if (currentLineItems.length > 0 && currentLineY !== null) {
-      pushCleanedLine(currentLineItems, currentLineY);
     }
 
     for (let l = 0; l < lines.length; l++) {
       const line = lines[l];
       const trimmedText = line.text.trim();
 
-      const isDayHeading =
-        /^\s*[-—–(]*\s*(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) ||
-        (/(?<![a-ząćęłńóśźż])(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) && (line.isUpper || line.fontSize >= 12) && trimmedText.length < 120);
+      // Check if line represents a Day heading (Dzień 1 to Dzień 175)
+      const dayInfo = parseDayHeading(trimmedText);
 
-      const isPrimaryChapter =
-        isDayHeading ||
-        (/^\s*(?:rozdzia[łl]|chapter)(?![a-ząćęłńóśźż])\s*\d+/i.test(trimmedText) && trimmedText.length < 100) ||
-        (/^\s*wst[eę]p(?![a-ząćęłńóśźż])/i.test(trimmedText) && trimmedText.length < 100) ||
-        (/^\s*(?:prolog|epilog|zako[nń]czenie)(?![a-ząćęłńóśźż])/i.test(trimmedText) && trimmedText.length < 100);
-
-      const isInChapterHeading =
-        !isPrimaryChapter &&
-        (
-          /^\s*(?:część|etap|tajemnica|modlitwa|rozważanie|wprowadzenie|akt|wezwanie|czytanie|psalm|pieśń)(?![a-ząćęłńóśźż])/i.test(trimmedText) ||
-          (line.isUpper && trimmedText.length < 60 && line.fontSize >= 11) ||
-          (line.fontSize >= 13 && trimmedText.length < 80)
-        );
-
-      if (isPrimaryChapter) {
-        flushParagraph();
-
-        let cleanedTitle = sanitizeExtractedText(line.text, customPatterns);
-        if (/^wst[eę]p\b/i.test(cleanedTitle)) {
-          cleanedTitle = 'Wstęp';
+      if (dayInfo) {
+        // If dayNum <= currentDayNumber, it is a running header repetition on page 2+ of the day
+        if (dayInfo.dayNum <= currentDayNumber) {
+          // Ignore running header repetition!
+          continue;
         }
 
+        // New Day detected! dayInfo.dayNum > currentDayNumber
+        flushParagraph();
+
+        let dayFullTitle = dayInfo.fullTitle;
+
+        // Check if next line is a continuation of the day heading (e.g. date, subtitle, stage)
+        if (l + 1 < lines.length) {
+          const nextLine = lines[l + 1];
+          const nextTrimmed = nextLine.text.trim();
+          const nextIsDay = parseDayHeading(nextTrimmed);
+          const nextIsSubheading = isInChapterHeading(nextTrimmed, nextLine.fontSize, nextLine.isUpper);
+
+          const isContinuation =
+            !nextIsDay &&
+            !nextIsSubheading &&
+            (
+              /^(?:[-—–]|\d{1,2}\s+[a-ząćęłńóśźż]+|cykl\s+[ivx]+|etap\s*\d+|część\s*\d+|tajemnica\s*\d+)/i.test(nextTrimmed) ||
+              (nextLine.isUpper && nextTrimmed.length < 90)
+            );
+
+          if (isContinuation) {
+            dayFullTitle = deduplicateDayHeading(`${dayFullTitle} — ${nextTrimmed}`);
+            l++; // Consume next line into heading
+          }
+        }
+
+        // Finalize current chapter if it has content
         if (currentChapter.paragraphs.length > 0) {
           if (currentChapter.pageRange) {
             currentChapter.pageRange.end = pageNum;
           }
           chapters.push(currentChapter);
-
-          currentChapter = {
-            id: `ch-${chapters.length + 1}`,
-            title: cleanedTitle || (isDayHeading ? 'Dzień' : `Rozdział ${chapters.length + 1}`),
-            paragraphs: [],
-            pageRange: { start: pageNum, end: pageNum },
-          };
-        } else {
-          currentChapter.title = cleanedTitle || (isDayHeading ? 'Dzień' : 'Wstęp');
-          currentChapter.pageRange = { start: pageNum, end: pageNum };
         }
 
-        // Add primary heading as first element of chapter (strictly 12pt bold)
+        currentDayNumber = dayInfo.dayNum;
+        currentChapter = {
+          id: `ch-day-${dayInfo.dayNum}`,
+          title: dayFullTitle,
+          paragraphs: [],
+          pageRange: { start: pageNum, end: pageNum },
+        };
+
+        // Add Day heading as first paragraph (strictly 12pt bold)
         currentChapter.paragraphs.push({
-          text: cleanedTitle || currentChapter.title,
+          text: dayFullTitle,
           isHeading: true,
           headingLevel: 1,
           fontSize: 12,
           isBold: true,
         });
 
-        const words = (cleanedTitle || currentChapter.title).split(/\s+/).length;
+        const words = dayFullTitle.split(/\s+/).length;
         totalWordsCount += words;
         lastLineY = line.y;
         lastFontSize = line.fontSize;
         continue;
       }
 
-      if (isInChapterHeading) {
+      // Check if line is an in-chapter subheading
+      const isSubheading = isInChapterHeading(trimmedText, line.fontSize, line.isUpper);
+
+      if (isSubheading) {
         flushParagraph();
 
-        let cleanedSubHeading = sanitizeExtractedText(line.text, customPatterns);
-        if (cleanedSubHeading && cleanedSubHeading.length > 1) {
+        let cleanSub = sanitizeExtractedText(trimmedText, customPatterns);
+        if (cleanSub && cleanSub.length > 1) {
           currentChapter.paragraphs.push({
-            text: cleanedSubHeading,
+            text: cleanSub,
             isHeading: true,
             headingLevel: 2,
             fontSize: 12,
             isBold: true,
           });
-          const words = cleanedSubHeading.split(/\s+/).length;
-          totalWordsCount += words;
+          totalWordsCount += cleanSub.split(/\s+/).length;
         }
 
         lastLineY = line.y;
@@ -504,7 +628,8 @@ export async function extractBookContentFromPdf(
         continue;
       }
 
-      // Check paragraph separation: significant vertical gap or font size change
+      // Normal body line
+      // Check paragraph separation: significant vertical gap
       const yDelta = lastLineY !== null ? Math.abs(lastLineY - line.y) : 0;
       const isSignificantGap = yDelta > line.fontSize * 1.8;
 
@@ -543,17 +668,17 @@ export async function extractBookContentFromPdf(
 
   validChapters.forEach((ch, idx) => {
     let cleanTitle = sanitizeExtractedText(ch.title, customPatterns);
-    if (/^wst[eę]p\b/i.test(cleanTitle)) {
-      cleanTitle = 'Wstęp';
+    if (/^wst[eę]p\b/i.test(cleanTitle) || ch.id === 'ch-intro') {
+      cleanTitle = 'Wprowadzenie';
     }
-    ch.title = cleanTitle || (idx === 0 ? 'Wstęp' : `Rozdział ${idx + 1}`);
+    ch.title = cleanTitle || (idx === 0 ? 'Wprowadzenie' : `Dzień ${idx}`);
   });
 
   // If no chapters detected, create fallback chapter
   if (validChapters.length === 0) {
     validChapters.push({
-      id: 'ch-1',
-      title: 'Wstęp',
+      id: 'ch-intro',
+      title: 'Wprowadzenie',
       paragraphs: [
         {
           text: 'Brak odczytanego tekstu z dokumentu źródłowego lub dokument zawiera wyłącznie grafiki rastrowe.',
@@ -564,12 +689,20 @@ export async function extractBookContentFromPdf(
       pageRange: { start: 1, end: numPages || 1 },
     });
   } else {
-    // If first chapter heading exists, make sure title matches
-    const firstP = validChapters[0].paragraphs[0];
-    if (firstP?.isHeading) {
-      let cleanFirstHeading = sanitizeExtractedText(firstP.text, customPatterns);
-      if (/^wst[eę]p\b/i.test(cleanFirstHeading)) cleanFirstHeading = 'Wstęp';
-      validChapters[0].title = cleanFirstHeading || 'Wstęp';
+    // If first chapter is Wprowadzenie, ensure its title and first heading are "Wprowadzenie"
+    if (validChapters[0].id === 'ch-intro') {
+      validChapters[0].title = 'Wprowadzenie';
+      if (validChapters[0].paragraphs.length > 0 && validChapters[0].paragraphs[0].isHeading) {
+        validChapters[0].paragraphs[0].text = 'Wprowadzenie';
+      } else {
+        validChapters[0].paragraphs.unshift({
+          text: 'Wprowadzenie',
+          isHeading: true,
+          headingLevel: 1,
+          fontSize: 12,
+          isBold: true,
+        });
+      }
     }
   }
 

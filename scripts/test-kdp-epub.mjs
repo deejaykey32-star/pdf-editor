@@ -120,12 +120,13 @@ function sanitizeExtractedText(text, customPatterns = []) {
   // 1. Separate and deduplicate overlapping text artifacts and consecutive repeated phrases
   cleaned = deduplicateOverlappingText(cleaned);
 
-  // 2. Transform long specific headings into "Wstęp" as requested
+  // 2. Transform long specific headings into "Wprowadzenie" as requested
   cleaned = cleaned.replace(
     /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
-    'Wstęp'
+    'Wprowadzenie'
   );
-  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
+  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wprowadzenie');
+  cleaned = cleaned.replace(/^Wst[eę]p$/gi, 'Wprowadzenie');
 
   // 3. Deduplicate repeated day headings (e.g. "DZIEŃ 1 ... Dzień 1 Dzień 1: Dzień 1-")
   cleaned = deduplicateDayHeading(cleaned);
@@ -158,6 +159,66 @@ function sanitizeExtractedText(text, customPatterns = []) {
   return cleaned;
 }
 
+function parseDayHeading(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
+
+  const match = trimmed.match(/^[-—–(]*\s*(?:dzie[nń])\s*(\d{1,3})\b(?:\s*[-—–:]|\s+|$)/i);
+  if (!match) return null;
+
+  const num = parseInt(match[1], 10);
+  if (isNaN(num) || num < 1 || num > 175) return null;
+
+  return {
+    isDay: true,
+    dayNum: num,
+    fullTitle: deduplicateDayHeading(trimmed),
+  };
+}
+
+function isInChapterHeading(text, fontSize = 12, isUpper = false) {
+  if (!text) return false;
+  const trimmed = text.trim();
+
+  if (/[.,;]$/.test(trimmed)) return false;
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 8 || trimmed.length > 70) return false;
+
+  const isStructural =
+    /^\s*(?:etap\s*\d+|część\s*\d+|tajemnica\s*\d+|rozważanie(?:\s+[a-ząćęłńóśźż]+)?|modlitwa(?:\s+[a-ząćęłńóśźż]+)?|akt\s+[a-ząćęłńóśźż]+|wezwanie(?:\s+[a-ząćęłńóśźż]+)?|czytanie\s*\d*|psalm\s*\d*|pieśń\s*\d*)\b/i.test(trimmed);
+
+  if (isStructural) return true;
+
+  if (isUpper && words.length <= 4 && trimmed.length <= 35) {
+    const prayerPhrases = [
+      'AMEN',
+      'ALLELUJA',
+      'BOGU NIECH BĘDĄ DZIĘKI',
+      'CHWAŁA OJCU',
+      'ŚWIĘTY BOŻE',
+      'JEZU UFAM TOBIE',
+      'ZMIŁUJ SIĘ NAD NAMI',
+      'WYSŁUCHAJ NAS PANIE',
+      'MÓDL SIĘ ZA NAMI',
+      'POD TWOJĄ OBRONĘ',
+      'OJCZE NASZ',
+      'ZDROWAŚ MARYJO',
+      'WIERZĘ W BOGA',
+    ];
+    const upperClean = trimmed.replace(/[^A-ZĄĆĘŁŃÓŚŹŻ\s]/g, '').trim();
+    if (prayerPhrases.some((p) => upperClean.includes(p) || p.includes(upperClean))) {
+      return false;
+    }
+
+    if (/^(?:WSTĘP|WPROWADZENIE|ROZWAŻANIE|MODLITWA|TAJEMNICA|ETAP|CZĘŚĆ|ZAKOŃCZENIE|DODATEK)$/i.test(upperClean)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 async function runTests() {
   console.log('================================================================');
   console.log('🧪 TEST: FILTRACJA FRAGMENTÓW, FORMAT 12 PT I OCHRONA MARGINESÓW');
@@ -180,7 +241,6 @@ async function runTests() {
     cleanedSample.includes('RHZ365') ||
     cleanedSample.includes('str. 2') ||
     cleanedSample.includes('Autor Publikacji') ||
-    cleanedSample.includes('Wprowadzenie') ||
     cleanedSample.includes('Modlitwa (YouTube)') ||
     cleanedSample.includes('Blog i modlitwa') ||
     cleanedSample.includes('Różaniec Historii Zbawienia')
@@ -188,8 +248,8 @@ async function runTests() {
     throw new Error('Test FAILED: Niepożądane fragmenty RHZ365 nie zostały w pełni wycięte!');
   }
 
-  if (!cleanedSample.includes('Wstęp')) {
-    throw new Error('Test FAILED: "Wstęp" powinien zostać zachowany jako nagłówek!');
+  if (!cleanedSample.includes('Wprowadzenie')) {
+    throw new Error('Test FAILED: "Wprowadzenie" powinno zostać zachowane jako nagłówek!');
   }
 
   if (!cleanedSample.includes('To jest oryginalny tekst wstępu, który ma pozostać bez modyfikacji słów.')) {
@@ -197,7 +257,7 @@ async function runTests() {
   }
 
   console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy i stopki RHZ365.');
-  console.log('   ✓ Pomyślnie zachowano nagłówek "Wstęp" oraz nienaruszoną treść czytania.\n');
+  console.log('   ✓ Pomyślnie zachowano nagłówek "Wprowadzenie" oraz nienaruszoną treść czytania.\n');
 
   // Test 1b: Sanitize unwanted strings (WnR365 - Widoki na Raj)
   console.log('[2/4] Sprawdzanie usuwania wskazanych fragmentów tekstu z WnR365...');
@@ -528,83 +588,215 @@ body, p, h1, h2, h3 { font-size: ${customEpubSize}pt !important; text-align: jus
   const epubBytes = await zip.generateAsync({ type: 'uint8array', mimeType: 'application/epub+zip' });
   console.log(`   ✓ Pakiet ePUB wygenerowany pomyślnie (${epubBytes.length} bajtów) z wybranym rozmiarem ${customEpubSize}pt.`);
 
-  // Test 8: Verify continuous flow within a day (no empty pages between sub-headings)
-  console.log('[8/8] Sprawdzanie ciągłego przepływu tekstu w obrębie dnia (brak pustych stron, scalenie podtytułów w jeden rozdział)...');
-  const mockLines = [
-    { text: 'DZIEŃ 1 — 25 GRUDNIA / 25 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 1 Stworzenie świata i człowieka', fontSize: 13, isUpper: false, y: 500 },
-    { text: 'Część 1', fontSize: 12, isUpper: false, y: 480 },
-    { text: 'Tajemnica 1 Stworzenie świata', fontSize: 12, isUpper: false, y: 460 },
-    { text: 'Bóg na początku stworzył niebo i ziemię. Ziemia zaś była bezładem i pustką.', fontSize: 12, isUpper: false, y: 440 },
-    { text: 'I rzekł Bóg: Niechaj się stanie światłość! I stała się światłość.', fontSize: 12, isUpper: false, y: 420 },
-    { text: 'MODLITWA', fontSize: 12, isUpper: true, y: 390 },
-    { text: 'Panie nasz i Boże, dziękujemy Ci za dar stworzenia i odkupienia.', fontSize: 12, isUpper: false, y: 370 },
-    { text: 'DZIEŃ 2 — 26 GRUDNIA / 26 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica 2', fontSize: 13, isUpper: false, y: 340 },
+  // Test 8: Verify reading order & line clustering (no word interleaving or scrambling)
+  console.log('[8/9] Sprawdzanie naturalnego porządku czytania i klastrowania linii (brak poprzestawianych słów i zdań)...');
+  const rawJumbledItems = [
+    // Line 1: y ~ 700. Word 1 (x=50), Word 3 (x=200), Word 2 (x=120) with slight baseline jitter
+    { str: 'świętego', x: 200, y: 700.5, width: 60, fontSize: 12 },
+    { str: 'Początek', x: 50, y: 700.1, width: 65, fontSize: 12 },
+    { str: 'życia', x: 120, y: 699.8, width: 40, fontSize: 12 },
+    { str: 'i', x: 165, y: 700.2, width: 10, fontSize: 12 },
+    { str: 'błogosławieństwa.', x: 265, y: 700.0, width: 110, fontSize: 12 },
+    // Line 2: y ~ 684. Words out of X order
+    { str: 'naszym', x: 150, y: 684.2, width: 55, fontSize: 12 },
+    { str: 'Bóg', x: 50, y: 683.9, width: 30, fontSize: 12 },
+    { str: 'jest', x: 85, y: 684.0, width: 30, fontSize: 12 },
+    { str: 'zawsze', x: 210, y: 683.8, width: 50, fontSize: 12 },
+    { str: 'z', x: 120, y: 684.1, width: 15, fontSize: 12 },
+    { str: 'przewodnikiem.', x: 265, y: 684.0, width: 100, fontSize: 12 },
   ];
 
-  const chaptersSim = [];
-  let curChapterSim = { id: 'ch-1', title: 'Wstęp', paragraphs: [] };
+  // 1. Sort strictly top-to-bottom (Y desc)
+  rawJumbledItems.sort((a, b) => b.y - a.y);
 
-  const isPrimaryChapterSim = (line) => {
-    const text = line.text.trim();
-    const isDay =
-      /^\s*[-—–(]*\s*(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(text) ||
-      (/(?<![a-ząćęłńóśźż])(?:dzie[nń])(?![a-ząćęłńóśźż])\s*\d+/i.test(text) && (line.isUpper || line.fontSize >= 12) && text.length < 120);
-    return isDay || /^\s*(?:rozdzia[łl]|chapter)(?![a-ząćęłńóśźż])\s*\d+/i.test(text) || /^\s*wst[eę]p(?![a-ząćęłńóśźż])/i.test(text);
-  };
+  // 2. Cluster into lines
+  const clusters = [];
+  for (const item of rawJumbledItems) {
+    const last = clusters.length > 0 ? clusters[clusters.length - 1] : null;
+    if (last && Math.abs(item.y - last.avgY) <= 3.0) {
+      last.items.push(item);
+      last.avgY = (last.avgY * (last.items.length - 1) + item.y) / last.items.length;
+    } else {
+      clusters.push({ avgY: item.y, items: [item] });
+    }
+  }
 
-  const isInChapterHeadingSim = (line) => {
-    const text = line.text.trim();
-    if (isPrimaryChapterSim(line)) return false;
-    return (
-      /^\s*(?:część|etap|tajemnica|modlitwa|rozważanie|wprowadzenie|akt)(?![a-ząćęłńóśźż])/i.test(text) ||
-      (line.isUpper && text.length < 60 && line.fontSize >= 11) ||
-      (line.fontSize >= 13 && text.length < 80)
-    );
-  };
+  if (clusters.length !== 2) {
+    throw new Error(`Test FAILED: Oczekiwano dokładnie 2 linii tekstu, a sklastrowano ${clusters.length}!`);
+  }
 
-  for (const line of mockLines) {
-    if (isPrimaryChapterSim(line)) {
-      if (curChapterSim.paragraphs.length > 0) {
-        chaptersSim.push(curChapterSim);
-        curChapterSim = { id: `ch-${chaptersSim.length + 1}`, title: line.text, paragraphs: [] };
-      } else {
-        curChapterSim.title = line.text;
+  // 3. For each cluster, sort X ascending and assemble
+  const assembledLines = clusters.map((c) => {
+    c.items.sort((a, b) => a.x - b.x);
+    let str = '';
+    let prev = null;
+    for (const it of c.items) {
+      if (!str) str = it.str;
+      else {
+        const gap = it.x - (prev ? prev.x + prev.width : 0);
+        if (gap >= 1.8) str += ' ' + it.str;
+        else str += it.str;
       }
-      curChapterSim.paragraphs.push({ text: line.text, isHeading: true, headingLevel: 1 });
+      prev = it;
+    }
+    return str;
+  });
+
+  if (assembledLines[0] !== 'Początek życia i świętego błogosławieństwa.') {
+    throw new Error(`Test FAILED: Linia 1 została zniekształcona: "${assembledLines[0]}"`);
+  }
+  if (assembledLines[1] !== 'Bóg jest z naszym zawsze przewodnikiem.') {
+    throw new Error(`Test FAILED: Linia 2 została zniekształcona: "${assembledLines[1]}"`);
+  }
+
+  console.log('   ✓ Linia 1 poprawnie złożona w naturalnej kolejności:', assembledLines[0]);
+  console.log('   ✓ Linia 2 poprawnie złożona w naturalnej kolejności:', assembledLines[1]);
+  console.log('   ✓ Całkowity brak przestawiania słów i zdań (zero word/line interleaving).\n');
+
+  // Test 9: Verify Structure: Exactly 1 Introduction (Wprowadzenie) + 175 Days = 176 chapters
+  console.log('[9/9] Sprawdzanie struktury: dokładnie 1 rozdział wstępu (Wprowadzenie) i 175 dni (176 rozdziałów)...');
+  
+  // Verify heading classification rules
+  if (isInChapterHeading('AMEN.', 12, true)) {
+    throw new Error('Test FAILED: "AMEN." nie powinno być uznane za nagłówek rozdziału!');
+  }
+  if (isInChapterHeading('JEZU, UFAM TOBIE.', 12, true)) {
+    throw new Error('Test FAILED: "JEZU, UFAM TOBIE." nie powinno być uznane za nagłówek!');
+  }
+  if (isInChapterHeading('ŚWIĘTY BOŻE, ŚWIĘTY MOCNY,', 12, true)) {
+    throw new Error('Test FAILED: "ŚWIĘTY BOŻE..." nie powinno być uznane za nagłówek!');
+  }
+  if (isInChapterHeading('Modlitwa jest spotkaniem z Bogiem w ciszy serca.', 12, false)) {
+    throw new Error('Test FAILED: Zdanie tekstu ciągłego zaczynające się od "Modlitwa" nie powinno być nagłówkiem!');
+  }
+  if (!isInChapterHeading('Część 1', 12, false)) {
+    throw new Error('Test FAILED: "Część 1" powinna być podtytułem!');
+  }
+  if (!isInChapterHeading('Tajemnica 1', 12, false)) {
+    throw new Error('Test FAILED: "Tajemnica 1" powinna być podtytułem!');
+  }
+  if (!isInChapterHeading('Rozważanie', 12, false)) {
+    throw new Error('Test FAILED: "Rozważanie" powinno być podtytułem!');
+  }
+  if (!isInChapterHeading('Modlitwa', 12, false)) {
+    throw new Error('Test FAILED: "Modlitwa" jako samodzielna etykieta powinna być podtytułem!');
+  }
+
+  // Simulate complete book extraction with Wprowadzenie + 175 days + continuation running headers
+  const simulatedBookLines = [
+    // Introduction pages
+    { text: 'Wprowadzenie', fontSize: 14, isUpper: false, page: 1 },
+    { text: 'To jest pełna treść wstępu do publikacji, wyjaśniająca cel i misję dzieła.', fontSize: 12, isUpper: false, page: 1 },
+    { text: 'Wprowadzenie ukazuje zamysł Boży w historii zbawienia ludzkości.', fontSize: 12, isUpper: false, page: 2 },
+  ];
+
+  // Generate lines for all 175 days, each day spanning 2 pages (page 1: title + content, page 2: running header + content)
+  for (let d = 1; d <= 175; d++) {
+    simulatedBookLines.push({
+      text: `DZIEŃ ${d} — 25 GRUDNIA / 25 czerwca Cykl I /II — Etap 1- Część 1- Tajemnica ${d} Tytuł dnia ${d}`,
+      fontSize: 13,
+      isUpper: false,
+      page: d * 2 + 1,
+    });
+    simulatedBookLines.push({
+      text: 'Część 1',
+      fontSize: 12,
+      isUpper: false,
+      page: d * 2 + 1,
+    });
+    simulatedBookLines.push({
+      text: `Rozważanie dnia ${d}. Bóg obdarza łaską każdego, kto szuka prawdy sercem czystym.`,
+      fontSize: 12,
+      isUpper: false,
+      page: d * 2 + 1,
+    });
+    // Continuation page running header (repeating DZIEŃ d)
+    simulatedBookLines.push({
+      text: `DZIEŃ ${d} — 25 GRUDNIA`,
+      fontSize: 12,
+      isUpper: false,
+      page: d * 2 + 2,
+    });
+    simulatedBookLines.push({
+      text: 'MODLITWA',
+      fontSize: 12,
+      isUpper: true,
+      page: d * 2 + 2,
+    });
+    simulatedBookLines.push({
+      text: `Modlitwa na zakończenie dnia ${d}. AMEN.`,
+      fontSize: 12,
+      isUpper: false,
+      page: d * 2 + 2,
+    });
+  }
+
+  // Run the exact chapter extraction state machine
+  const extractedChapters = [];
+  let currentDay = 0;
+  let activeChapter = {
+    id: 'ch-intro',
+    title: 'Wprowadzenie',
+    paragraphs: [],
+  };
+
+  for (const line of simulatedBookLines) {
+    const dayInfo = parseDayHeading(line.text);
+    if (dayInfo) {
+      if (dayInfo.dayNum <= currentDay) {
+        // Ignore continuation running header repetition!
+        continue;
+      }
+      // New Day!
+      if (activeChapter.paragraphs.length > 0) {
+        extractedChapters.push(activeChapter);
+      }
+      currentDay = dayInfo.dayNum;
+      activeChapter = {
+        id: `ch-day-${dayInfo.dayNum}`,
+        title: dayInfo.fullTitle,
+        paragraphs: [{ text: dayInfo.fullTitle, isHeading: true, headingLevel: 1 }],
+      };
       continue;
     }
 
-    if (isInChapterHeadingSim(line)) {
-      curChapterSim.paragraphs.push({ text: line.text, isHeading: true, headingLevel: 2 });
+    const isSub = isInChapterHeading(line.text, line.fontSize, line.isUpper);
+    if (isSub) {
+      activeChapter.paragraphs.push({ text: line.text, isHeading: true, headingLevel: 2 });
       continue;
     }
 
-    curChapterSim.paragraphs.push({ text: line.text, isHeading: false });
+    activeChapter.paragraphs.push({ text: line.text, isHeading: false });
   }
-  if (curChapterSim.paragraphs.length > 0) chaptersSim.push(curChapterSim);
-
-  // Assertions on Day 1:
-  // 1. Exactly 2 chapters (Dzień 1 and Dzień 2)
-  if (chaptersSim.length !== 2) {
-    throw new Error(`Test FAILED: Oczekiwano 2 rozdziałów (Dzień 1 i Dzień 2), a otrzymano ${chaptersSim.length}!`);
+  if (activeChapter.paragraphs.length > 0) {
+    extractedChapters.push(activeChapter);
   }
 
-  // 2. Day 1 must contain Część 1, Tajemnica 1, Modlitwa, and body text ALL inside chapter 0!
-  const day1 = chaptersSim[0];
-  const day1Headings = day1.paragraphs.filter((p) => p.isHeading);
-  const day1Body = day1.paragraphs.filter((p) => !p.isHeading);
-
-  if (day1Headings.length !== 4) { // Dzień 1 title + Część 1 + Tajemnica 1 + MODLITWA
-    throw new Error(`Test FAILED: W Dniu 1 powinno być 4 nagłówków, a jest ${day1Headings.length}!`);
+  // Assertions:
+  // 1. Total chapters MUST be 176 (1 Wprowadzenie + 175 Dni)
+  if (extractedChapters.length !== 176) {
+    throw new Error(`Test FAILED: Oczekiwano dokładnie 176 rozdziałów (1 Wprowadzenie + 175 Dni), a otrzymano ${extractedChapters.length}!`);
   }
 
-  if (day1Body.length !== 3) {
-    throw new Error(`Test FAILED: W Dniu 1 powinno być 3 akapity treści, a jest ${day1Body.length}!`);
+  // 2. Chapter 0 MUST be "Wprowadzenie"
+  if (extractedChapters[0].title !== 'Wprowadzenie') {
+    throw new Error(`Test FAILED: Rozdział 0 powinien mieć tytuł "Wprowadzenie", a ma "${extractedChapters[0].title}"!`);
   }
 
-  console.log(`   ✓ Dzień 1 zawiera ${day1.paragraphs.length} elementów (nagłówek, podsekcje i treść) w JEDNYM rozdziale.`);
-  console.log('   ✓ Podtytuły (Część, Tajemnica, Modlitwa) NIE tworzą sztucznych podziałów na puste strony.');
-  console.log('   ✓ Cała treść dnia płynie ciągle i wypełnia strony od góry do dołu.\n');
+  // 3. Chapters 1 to 175 MUST be Dzień 1 to Dzień 175
+  for (let d = 1; d <= 175; d++) {
+    const ch = extractedChapters[d];
+    if (!ch.title.startsWith(`DZIEŃ ${d}`)) {
+      throw new Error(`Test FAILED: Rozdział ${d} powinien zaczynać się od "DZIEŃ ${d}", a ma tytuł "${ch.title}"!`);
+    }
+  }
+
+  console.log(`   ✓ Łączna liczba rozdziałów: dokładnie ${extractedChapters.length} (1 Wprowadzenie + 175 Dni).`);
+  console.log('   ✓ Rozdział 0:', extractedChapters[0].title);
+  console.log('   ✓ Rozdział 1:', extractedChapters[1].title);
+  console.log('   ✓ Rozdział 175:', extractedChapters[175].title);
+  console.log('   ✓ Nagłówki stron powtórzone ("DZIEŃ X") nie tworzą fałszywych rozdziałów.');
+  console.log('   ✓ Zwroty modlitewne i zwykłe zdania nie są oznaczane jako nagłówki.\n');
 
   console.log('\n================================================================');
   console.log('🎉 WSZYSTKIE TESTY ZAKOŃCZONE SUKCESEM!');
