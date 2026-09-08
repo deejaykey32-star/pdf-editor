@@ -6,19 +6,40 @@ import fontkit from '@pdf-lib/fontkit';
 
 // Simulation of sanitizeExtractedText
 const DEFAULT_UNWANTED_PATTERNS = [
+  // eMBiK365 and page numbers like "eMBiK365 — widokinaraj.pl str. 2", "str. 1-797", etc.
   /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.\s*\d+(?:-\d+)?)?/gi,
+  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
+  // RHZ365 poprawiony 07.09.2026 z kodami QR
+  /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
+  /z\s+kodami\s+QR\b/gi,
+  // Modlitwa (YouTube) & Blog i modlitwa
+  /Modlitwa\s*\(\s*YouTube\s*\)/gi,
+  /Modlitwa\s+YouTube/gi,
+  /Blog\s+i\s+modlitwa/gi,
+  // Różaniec Historii Zbawienia — RHZ365
   /R[oó]żaniec\s+Historii\s+Zbawienia\s*[-—–]?\s*RHZ\s*365/gi,
   /R[oó]żaniec\s+Historii\s+Zbawienia/gi,
-  /eMBiK\s*365/gi,
-  /widokinaraj\.pl/gi,
   /RHZ\s*365/gi,
-  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
-  /\bstr\.\s*1-797\b/gi,
+  /widokinaraj(?:\.pl)?/gi,
+  /eMBiK\s*365/gi,
+  // Placeholders
+  /Autor\s+Publikacji/gi,
+  /\bWprowadzenie\b/gi,
 ];
 
 function sanitizeExtractedText(text, customPatterns = []) {
   if (!text) return '';
   let cleaned = text;
+
+  // 1. Transform long specific headings into "Wstęp" as requested
+  cleaned = cleaned.replace(
+    /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
+    'Wstęp'
+  );
+  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
+
+  // 2. Strip all unwanted patterns
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...customPatterns];
 
   for (const pattern of allPatterns) {
@@ -32,9 +53,11 @@ function sanitizeExtractedText(text, customPatterns = []) {
 
   cleaned = cleaned
     .replace(/\s*[-—–]\s*[-—–]\s*/g, ' ')
-    .replace(/,\s*,/g, ',')
-    .replace(/^\s*[-—–,.:;]+\s*/g, '')
-    .replace(/\s*[-—–,.:;]+\s*$/g, '')
+    .replace(/\s*,\s*\./g, '.')
+    .replace(/\s*\.\s*,/g, '.')
+    .replace(/\s*,\s*,/g, ',')
+    .replace(/^[\s\-—–,;:.]+/g, '')
+    .replace(/\s*[-—–,;:]+\s*$/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
@@ -49,8 +72,9 @@ async function runTests() {
   // Test 1: Sanitize unwanted strings
   console.log('[1/3] Sprawdzanie usuwania wskazanych fragmentów tekstu...');
   const dirtySample =
-    'Rozważanie I: Tajemnica Radosna. eMBiK365 — widokinaraj.pl str. 1-797 Różaniec Historii Zbawienia — RHZ365, ' +
-    'Treść modlitwy różańcowej. Różaniec Historii Zbawienia — RHZ365. Dodatkowe informacje na widokinaraj.pl.';
+    'eMBiK365 — widokinaraj.pl str. 2. RHZ365 poprawiony 07.09.2026 z kodami QR Autor Publikacji Wprowadzenie ' +
+    'Modlitwa (YouTube) Blog i modlitwa Różaniec Historii Zbawienia — RHZ365 ' +
+    'Wstęp do Różańca Historii Zbawienia – RHZ365. To jest oryginalny tekst wstępu, który ma pozostać bez modyfikacji słów.';
 
   const cleanedSample = sanitizeExtractedText(dirtySample);
   console.log('   Oryginalny tekst:', dirtySample);
@@ -60,12 +84,26 @@ async function runTests() {
     cleanedSample.includes('eMBiK365') ||
     cleanedSample.includes('widokinaraj.pl') ||
     cleanedSample.includes('RHZ365') ||
-    cleanedSample.includes('str. 1-797') ||
+    cleanedSample.includes('str. 2') ||
+    cleanedSample.includes('Autor Publikacji') ||
+    cleanedSample.includes('Wprowadzenie') ||
+    cleanedSample.includes('Modlitwa (YouTube)') ||
+    cleanedSample.includes('Blog i modlitwa') ||
     cleanedSample.includes('Różaniec Historii Zbawienia')
   ) {
     throw new Error('Test FAILED: Niepożądane fragmenty nie zostały w pełni wycięte!');
   }
-  console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy i stopki.\n');
+
+  if (!cleanedSample.includes('Wstęp')) {
+    throw new Error('Test FAILED: "Wstęp" powinien zostać zachowany jako nagłówek!');
+  }
+
+  if (!cleanedSample.includes('To jest oryginalny tekst wstępu, który ma pozostać bez modyfikacji słów.')) {
+    throw new Error('Test FAILED: Treść wstępu została naruszona!');
+  }
+
+  console.log('   ✓ Pomyślnie wycięto wszystkie wskazane frazy i stopki.');
+  console.log('   ✓ Pomyślnie zachowano nagłówek "Wstęp" oraz nienaruszoną treść czytania.\n');
 
   // Test 2: Verify KDP PDF margins & 12pt format
   console.log('[2/3] Testowanie składu KDP A5 (12 pt dla wszystkich nagłówków i tekstu)...');

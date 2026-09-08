@@ -416,72 +416,89 @@ export async function generateKdpA5PrintPdf({
     isChapterStartPage = false;
   };
 
-  // 1. Half-Title / Title Page (strictly 12pt wrapped)
+  // 1. Optional Half-Title / Title Page (strictly 12pt wrapped)
+  const rawBookTitle = config.bookTitle || bookModel.title || '';
+  const cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
+
+  const rawAuthor = config.author || bookModel.author || '';
+  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
+  const isAuthorValid = Boolean(cleanAuthor && !/^(autor|autor publikacji|unknown)$/i.test(cleanAuthor.trim()));
+
+  const hasDistinctTitlePage = Boolean(
+    cleanBookTitle &&
+    cleanBookTitle.toLowerCase() !== 'wstęp' &&
+    cleanBookTitle.length > 2 &&
+    cleanBookTitle !== bookModel.chapters[0]?.title
+  );
+
   startNewPage();
   const isOddFirst = (currentPageNumber - 1) % 2 !== 0;
   const leftXFirst = bleedPt + (isOddFirst ? gutterPt : outerPt);
 
-  cursorY -= 60;
-  const rawBookTitle = config.bookTitle || bookModel.title || 'Publikacja A5';
-  const cleanBookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns);
+  if (hasDistinctTitlePage) {
+    cursorY -= 60;
+    const titleLines = breakParagraphIntoJustifiedLines(
+      cleanBookTitle,
+      boldFont,
+      FONT_SIZE_12PT,
+      columnWidthPt,
+      0
+    );
 
-  const rawAuthor = config.author || bookModel.author || 'Autor';
-  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
+    for (const tl of titleLines) {
+      let curX = leftXFirst;
+      for (const w of tl.words) {
+        safeDrawText(currentPage!, w, {
+          x: curX,
+          y: cursorY,
+          size: FONT_SIZE_12PT,
+          font: boldFont,
+          color: rgb(0.1, 0.1, 0.15),
+        });
+        curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
+      }
+      cursorY -= LINE_HEIGHT_16PT;
+    }
 
-  const titleLines = breakParagraphIntoJustifiedLines(
-    cleanBookTitle,
-    boldFont,
-    FONT_SIZE_12PT,
-    columnWidthPt,
-    0
-  );
-
-  for (const tl of titleLines) {
-    let curX = leftXFirst;
-    for (const w of tl.words) {
-      safeDrawText(currentPage!, w, {
-        x: curX,
+    if (isAuthorValid) {
+      cursorY -= 10;
+      safeDrawText(currentPage!, cleanAuthor, {
+        x: leftXFirst,
         y: cursorY,
         size: FONT_SIZE_12PT,
-        font: boldFont,
-        color: rgb(0.1, 0.1, 0.15),
+        font: regularFont,
+        color: rgb(0.35, 0.35, 0.4),
       });
-      curX += boldFont.widthOfTextAtSize(w, FONT_SIZE_12PT) + boldFont.widthOfTextAtSize(' ', FONT_SIZE_12PT);
     }
-    cursorY -= LINE_HEIGHT_16PT;
+
+    cursorY -= 15;
+    currentPage!.drawLine({
+      start: { x: leftXFirst, y: cursorY },
+      end: { x: leftXFirst + columnWidthPt, y: cursorY },
+      thickness: 1,
+      color: rgb(0.8, 0.82, 0.85),
+    });
+    cursorY -= 35;
   }
-
-  cursorY -= 10;
-  safeDrawText(currentPage!, cleanAuthor, {
-    x: leftXFirst,
-    y: cursorY,
-    size: FONT_SIZE_12PT,
-    font: regularFont,
-    color: rgb(0.35, 0.35, 0.4),
-  });
-
-  cursorY -= 15;
-  currentPage!.drawLine({
-    start: { x: leftXFirst, y: cursorY },
-    end: { x: leftXFirst + columnWidthPt, y: cursorY },
-    thickness: 1,
-    color: rgb(0.8, 0.82, 0.85),
-  });
-  cursorY -= 35;
 
   // 2. Typeset all chapters (Strictly 12pt format, no overflow)
   const totalChapters = bookModel.chapters.length;
 
   for (let chIdx = 0; chIdx < totalChapters; chIdx++) {
     const chapter = bookModel.chapters[chIdx];
-    const cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
+    let cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
+
+    // Normalize "Wstęp do..." into clean "Wstęp"
+    if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
+      cleanChapterTitle = 'Wstęp';
+    }
 
     // Skip empty or noise chapters
     if (!cleanChapterTitle) continue;
     activeChapterTitle = cleanChapterTitle;
 
-    // Start each chapter on a fresh page
-    if (currentPageNumber > 2) {
+    // Start each chapter on a fresh page (or on page 1 if no separate title page)
+    if (currentPageNumber > 2 || (hasDistinctTitlePage && currentPageNumber > 1)) {
       isChapterStartPage = true;
       startNewPage();
     }

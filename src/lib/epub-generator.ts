@@ -183,8 +183,10 @@ nav#toc a {
   const rawBookTitle = config.title || bookModel.title || 'Dokument A5';
   const bookTitle = sanitizeExtractedText(rawBookTitle, config.excludedPatterns) || 'Dokument A5';
 
-  const rawAuthor = config.author || bookModel.author || 'Autor';
-  const author = sanitizeExtractedText(rawAuthor, config.excludedPatterns) || 'Autor';
+  const rawAuthor = config.author || bookModel.author || '';
+  const cleanAuthor = sanitizeExtractedText(rawAuthor, config.excludedPatterns);
+  const isAuthorValid = Boolean(cleanAuthor && !/^(autor|autor publikacji|unknown)$/i.test(cleanAuthor.trim()));
+  const author = isAuthorValid ? cleanAuthor : '';
 
   const lang = config.language || 'pl';
   const bookUuid = config.identifier || `urn:uuid:${Math.random().toString(36).substring(2)}-${Date.now()}`;
@@ -201,7 +203,7 @@ nav#toc a {
 <body epub:type="frontmatter titlepage">
   <section class="titlepage">
     <h1 class="book-title">${escapeXml(bookTitle)}</h1>
-    <p class="book-author">${escapeXml(author)}</p>
+    ${isAuthorValid ? `<p class="book-author">${escapeXml(author)}</p>` : ''}
     <hr class="title-separator" />
     <p style="text-align: center; font-size: 11pt; color: #777;">Wydanie cyfrowe ePUB (Format 12 pt | Amazon KDP eBook)</p>
   </section>
@@ -236,7 +238,10 @@ nav#toc a {
 
   for (let idx = 0; idx < bookModel.chapters.length; idx++) {
     const chapter = bookModel.chapters[idx];
-    const cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
+    let cleanChapterTitle = sanitizeExtractedText(chapter.title, config.excludedPatterns);
+    if (/^wst[eę]p\b/i.test(cleanChapterTitle)) {
+      cleanChapterTitle = 'Wstęp';
+    }
     if (!cleanChapterTitle) continue;
 
     const filename = `chapter_${String(chapterFiles.length + 1).padStart(3, '0')}.xhtml`;
@@ -248,10 +253,13 @@ nav#toc a {
 
     for (let pIdx = 0; pIdx < chapter.paragraphs.length; pIdx++) {
       const p = chapter.paragraphs[pIdx];
-      const cleanParaText = sanitizeExtractedText(p.text, config.excludedPatterns);
+      let cleanParaText = sanitizeExtractedText(p.text, config.excludedPatterns);
+      if (p.isHeading && /^wst[eę]p\b/i.test(cleanParaText)) {
+        cleanParaText = 'Wstęp';
+      }
       if (!cleanParaText || cleanParaText.length <= 1) continue;
 
-      if (renderedParasCount === 0 && p.isHeading && cleanParaText === cleanChapterTitle) {
+      if (renderedParasCount === 0 && p.isHeading && (cleanParaText === cleanChapterTitle || cleanParaText === 'Wstęp')) {
         continue;
       }
 

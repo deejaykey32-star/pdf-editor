@@ -13,22 +13,35 @@ interface RawTextItem {
 
 /**
  * Default list of unwanted header/footer/watermark patterns to strip from extracted text
- * (e.g. eMBiK365, widokinaraj.pl, RHZ365, str. 1-797, etc.)
+ * (e.g. eMBiK365, widokinaraj.pl, RHZ365, str. 2, str. 1-797, Modlitwa (YouTube), etc.)
  */
 export const DEFAULT_UNWANTED_PATTERNS: (RegExp | string)[] = [
+  // eMBiK365 and page numbers like "eMBiK365 — widokinaraj.pl str. 2", "str. 1-797", etc.
   /eMBiK\s*365\s*[-—–]?\s*widokinaraj(?:\.pl)?(?:\s*str\.\s*\d+(?:-\d+)?)?/gi,
+  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
+  // RHZ365 poprawiony 07.09.2026 z kodami QR
+  /RHZ\s*365\s+poprawion[yae]\s+\d{2}[.-]\d{2}[.-]\d{4}\s+z\s+kodami\s+QR/gi,
+  /RHZ\s*365\s+poprawion[yae].*?z\s+kodami\s+QR/gi,
+  /z\s+kodami\s+QR\b/gi,
+  // Modlitwa (YouTube) & Blog i modlitwa
+  /Modlitwa\s*\(\s*YouTube\s*\)/gi,
+  /Modlitwa\s+YouTube/gi,
+  /Blog\s+i\s+modlitwa/gi,
+  // Różaniec Historii Zbawienia — RHZ365
   /R[oó]żaniec\s+Historii\s+Zbawienia\s*[-—–]?\s*RHZ\s*365/gi,
   /R[oó]żaniec\s+Historii\s+Zbawienia/gi,
-  /eMBiK\s*365/gi,
-  /widokinaraj\.pl/gi,
   /RHZ\s*365/gi,
-  /\bstr\.\s*\d+(?:-\d+)?\b/gi,
-  /\bstr\.\s*1-797\b/gi,
+  /widokinaraj(?:\.pl)?/gi,
+  /eMBiK\s*365/gi,
+  // Placeholders
+  /Autor\s+Publikacji/gi,
+  /\bWprowadzenie\b/gi,
 ];
 
 /**
- * Removes unwanted headers, footers, and noise fragments from text,
- * normalizing spaces and dangling punctuation.
+ * Normalizes headings and removes unwanted headers, footers, and noise fragments from text,
+ * transforming "Wstęp do Różańca Historii Zbawienia – RHZ365" into "Wstęp"
+ * without modifying the actual reading body text under it.
  */
 export function sanitizeExtractedText(
   text: string,
@@ -36,6 +49,15 @@ export function sanitizeExtractedText(
 ): string {
   if (!text) return '';
   let cleaned = text;
+
+  // 1. Transform long specific headings into "Wstęp" as requested
+  cleaned = cleaned.replace(
+    /Wst[eę]p\s+do\s+R[oó]ża[nń]ca\s+Historii\s+Zbawienia(?:\s*[-—–]?\s*RHZ\s*365)?/gi,
+    'Wstęp'
+  );
+  cleaned = cleaned.replace(/Wst[eę]p\s*[-—–]\s*RHZ\s*365/gi, 'Wstęp');
+
+  // 2. Strip all unwanted patterns
   const allPatterns = [...DEFAULT_UNWANTED_PATTERNS, ...(customPatterns || [])];
 
   for (const pattern of allPatterns) {
@@ -47,15 +69,15 @@ export function sanitizeExtractedText(
     }
   }
 
-  // Clean dangling dashes, commas, colons, double punctuation, and repeated spaces
+  // 3. Clean dangling dashes, commas, colons, double punctuation, and repeated spaces
   cleaned = cleaned
     .replace(/\s*[-—–]\s*[-—–]\s*/g, ' ')
     .replace(/\s*,\s*\./g, '.')
     .replace(/\s*\.\s*,/g, '.')
     .replace(/\s*\.\s*\./g, '.')
     .replace(/\s*,\s*,/g, ',')
-    .replace(/^\s*[-—–,.:;]+\s*/g, '')
-    .replace(/\s*[-—–,.:;]+\s*$/g, '')
+    .replace(/^[\s\-—–,;:.]+/g, '')
+    .replace(/\s*[-—–,;:]+\s*$/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 
@@ -70,7 +92,8 @@ export interface ExtractBookOptions {
 /**
  * Robustly extracts structured book text (chapters, headings, paragraphs)
  * from a loaded PDFDocumentProxy or raw PDF Uint8Array using PDF.js,
- * automatically filtering out unwanted headers, footers, and noise phrases.
+ * automatically filtering out unwanted headers, footers, and noise phrases,
+ * leaving "Wstęp" clean and formatting intact.
  */
 export async function extractBookContentFromPdf(
   source: import('pdfjs-dist').PDFDocumentProxy | Uint8Array,
@@ -102,7 +125,7 @@ export async function extractBookContentFromPdf(
   const chapters: ExtractedChapter[] = [];
   let currentChapter: ExtractedChapter = {
     id: 'ch-1',
-    title: 'Wprowadzenie',
+    title: 'Wstęp',
     paragraphs: [],
     pageRange: { start: 1, end: 1 },
   };
@@ -172,7 +195,7 @@ export async function extractBookContentFromPdf(
       const cleanedText = sanitizeExtractedText(rawText, customPatterns);
       const maxFont = Math.max(...itemsToFlush.map((i) => i.fontSize));
 
-      // Discard empty lines or lone punctuation
+      // Discard empty lines, standalone numbers or lone punctuation
       if (cleanedText.length > 1 && !/^[-—–,.:;]+$/.test(cleanedText)) {
         lines.push({
           y: yCoord,
@@ -241,7 +264,10 @@ export async function extractBookContentFromPdf(
           chapters.push(currentChapter);
         }
 
-        const cleanedTitle = sanitizeExtractedText(line.text, customPatterns);
+        let cleanedTitle = sanitizeExtractedText(line.text, customPatterns);
+        if (/^wst[eę]p\b/i.test(cleanedTitle)) {
+          cleanedTitle = 'Wstęp';
+        }
 
         currentChapter = {
           id: `ch-${chapters.length + 1}`,
@@ -298,7 +324,7 @@ export async function extractBookContentFromPdf(
   if (validChapters.length === 0) {
     validChapters.push({
       id: 'ch-1',
-      title: 'Treść Główna',
+      title: 'Wstęp',
       paragraphs: [
         {
           text: 'Brak odczytanego tekstu z dokumentu źródłowego lub dokument zawiera wyłącznie grafiki rastrowe.',
@@ -309,15 +335,15 @@ export async function extractBookContentFromPdf(
       pageRange: { start: 1, end: numPages || 1 },
     });
   } else {
-    // If first chapter has title "Wprowadzenie" and its first paragraph is a heading, use it
-    if (validChapters[0].title === 'Wprowadzenie' && validChapters[0].paragraphs[0]?.isHeading) {
+    // If first chapter heading exists, make sure title matches
+    if (validChapters[0].paragraphs[0]?.isHeading) {
       validChapters[0].title = validChapters[0].paragraphs[0].text;
     }
   }
 
   return {
     title: detectedTitle || 'Dokument A5 Amazon KDP',
-    author: 'Autor Publikacji',
+    author: '',
     chapters: validChapters,
     totalWords: totalWordsCount,
     sourcePageCount: numPages,

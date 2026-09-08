@@ -45,7 +45,16 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
 
   // Exclusion filter text (lines to strip from extracted text)
   const [excludedPhrasesText, setExcludedPhrasesText] = useState<string>(
-    'eMBiK365 — widokinaraj.pl str. 1-797\nRóżaniec Historii Zbawienia — RHZ365\nwidokinaraj.pl\nRHZ365'
+    `eMBiK365 — widokinaraj.pl str. 2
+eMBiK365 — widokinaraj.pl str. 1-797
+RHZ365 poprawiony 07.09.2026 z kodami QR
+Autor Publikacji
+Wprowadzenie
+Modlitwa (YouTube)
+Blog i modlitwa
+Różaniec Historii Zbawienia — RHZ365
+widokinaraj.pl
+RHZ365`
   );
 
   const excludedPatternsList = useMemo(() => {
@@ -68,7 +77,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
     textAlign: 'justify',
     fontFamily: 'georgia',
     bookTitle: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || 'Dokument A5',
-    author: 'Autor Publikacji',
+    author: '',
     runningHeader: true,
     pageNumbers: true,
     firstLineIndentMm: 5,
@@ -79,7 +88,7 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   // ePUB Configuration
   const [epubConfig, setEpubConfig] = useState<EpubConfig>({
     title: documentInfo?.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || 'Dokument A5',
-    author: 'Autor Publikacji',
+    author: '',
     language: 'pl',
     fontSizePt: 12,
     textAlign: 'justify',
@@ -799,14 +808,27 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
                   {/* Sample 12pt Justified Paragraphs */}
                   <div className="space-y-1.5 text-justify" style={{ fontSize: '8px', lineHeight: '1.3' }}>
                     <div className="font-bold text-[8.5px] text-zinc-900 mb-1 text-left">
-                      Rozdział 1. Specyfikacja Drukarska
+                      {bookModel?.chapters[0]?.title || 'Wstęp'}
                     </div>
-                    <p className="text-zinc-800 indent-2">
-                      Wszystkie czcionki w tym nagłówki są w formacie <strong>12 pt</strong>. Układ kolumny tekstu posiada matematyczną ochronę marginesów zapobiegającą jakiemukolwiek wychodzeniu wyrazów poza krawędzie strony.
-                    </p>
-                    <p className="text-zinc-800 indent-2">
-                      Niepożądane fragmenty stopek i nagłówków zostały automatycznie wycięte z dokumentu źródłowego.
-                    </p>
+                    {bookModel?.chapters[0]?.paragraphs?.filter((p) => !p.isHeading).length ? (
+                      bookModel.chapters[0].paragraphs
+                        .filter((p) => !p.isHeading)
+                        .slice(0, 2)
+                        .map((p, idx) => (
+                          <p key={idx} className="text-zinc-800 indent-2 line-clamp-3">
+                            {p.text}
+                          </p>
+                        ))
+                    ) : (
+                      <>
+                        <p className="text-zinc-800 indent-2">
+                          Wszystkie czcionki w tym nagłówki są w formacie <strong>12 pt</strong>. Układ kolumny tekstu posiada matematyczną ochronę marginesów zapobiegającą jakiemukolwiek wychodzeniu wyrazów poza krawędzie strony.
+                        </p>
+                        <p className="text-zinc-800 indent-2">
+                          Niepożądane fragmenty stopek i nagłówków zostały automatycznie wycięte z dokumentu źródłowego.
+                        </p>
+                      </>
+                    )}
                   </div>
 
                   {/* Running Footer Page Number */}
@@ -830,14 +852,27 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
 
                 <div className="my-auto space-y-2 text-justify" style={{ fontSize: '8.5px', lineHeight: '1.4' }}>
                   <h2 className="font-bold text-[9px] text-center text-zinc-900 mb-1.5 pb-1 border-b border-zinc-300">
-                    Rozdział I. Wydanie Cyfrowe (12 pt)
+                    {bookModel?.chapters[0]?.title || 'Wstęp'}
                   </h2>
-                  <p className="indent-2 text-zinc-800">
-                    Treść oraz nagłówki zostały sformatowane w formacie 12 pt z pełnym wyjustowaniem i wycięciem powtarzających się stopek.
-                  </p>
-                  <p className="indent-2 text-zinc-800">
-                    Tekst dopasowuje się do ekranu bez wychodzenia poza marginesy czytnika Kindle i iPad.
-                  </p>
+                  {bookModel?.chapters[0]?.paragraphs?.filter((p) => !p.isHeading).length ? (
+                    bookModel.chapters[0].paragraphs
+                      .filter((p) => !p.isHeading)
+                      .slice(0, 2)
+                      .map((p, idx) => (
+                        <p key={idx} className="indent-2 text-zinc-800 line-clamp-3">
+                          {p.text}
+                        </p>
+                      ))
+                  ) : (
+                    <>
+                      <p className="indent-2 text-zinc-800">
+                        Treść oraz nagłówki zostały sformatowane w formacie 12 pt z pełnym wyjustowaniem i wycięciem powtarzających się stopek.
+                      </p>
+                      <p className="indent-2 text-zinc-800">
+                        Tekst dopasowuje się do ekranu bez wychodzenia poza marginesy czytnika Kindle i iPad.
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex justify-between items-center text-[7.5px] text-zinc-400 pt-2 border-t border-zinc-200">
