@@ -5,7 +5,7 @@ export type CoverFontFamily = 'playfair' | 'georgia' | 'cinzel' | 'montserrat' |
 export type CoverTextColorPreset = 'gold' | 'white' | 'cream' | 'silver' | 'black';
 
 export interface CoverTextLayer {
-  id: 'title' | 'subtitle' | 'author' | 'badge' | 'blurb' | 'publisher';
+  id: string;
   label: string;
   originalText: string;
   translatedText: string;
@@ -13,6 +13,8 @@ export interface CoverTextLayer {
   fontSizePt: number;
   colorHex: string;
   isUppercase: boolean;
+  isBold?: boolean;
+  isItalic?: boolean;
   letterSpacingEm: number;
   lineHeight: number;
   yPercent: number; // 0 to 100% of height

@@ -186,24 +186,27 @@ function wrapCanvasText(
   text: string,
   maxWidth: number
 ): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [];
+  const paragraphs = text.split('\n');
+  const allLines: string[] = [];
 
-  const lines: string[] = [];
-  let currentLine = words[0];
+  for (const para of paragraphs) {
+    const words = para.split(/\s+/).filter(Boolean);
+    if (words.length === 0) continue;
 
-  for (let i = 1; i < words.length; i++) {
-    const candidate = currentLine + ' ' + words[i];
-    const width = ctx.measureText(candidate).width;
-    if (width <= maxWidth) {
-      currentLine = candidate;
-    } else {
-      lines.push(currentLine);
-      currentLine = words[i];
+    let currentLine = words[0];
+    for (let i = 1; i < words.length; i++) {
+      const candidate = currentLine + ' ' + words[i];
+      const width = ctx.measureText(candidate).width;
+      if (width <= maxWidth) {
+        currentLine = candidate;
+      } else {
+        allLines.push(currentLine);
+        currentLine = words[i];
+      }
     }
+    allLines.push(currentLine);
   }
-  lines.push(currentLine);
-  return lines;
+  return allLines;
 }
 
 /**
@@ -221,6 +224,7 @@ export async function renderCoverToCanvas(
     vignetteStrength: number;
     hasContrastBand: boolean;
     contrastBandOpacity: number;
+    hasTitleDivider?: boolean;
     spineWidthMm?: number;
     bleedMm?: number;
   }
@@ -235,6 +239,7 @@ export async function renderCoverToCanvas(
     vignetteStrength,
     hasContrastBand,
     contrastBandOpacity,
+    hasTitleDivider = false,
     spineWidthMm = 12,
     bleedMm = 3.0,
   } = options;
@@ -353,7 +358,9 @@ export async function renderCoverToCanvas(
 
     const baseFontSizePx = Math.round(layer.fontSizePt * 2.8 * scale);
     const fontCss = getFontFamilyCss(layer.fontFamily);
-    const isBold = layer.id === 'title' || layer.id === 'badge';
+    const isBold = layer.isBold ?? (layer.id === 'title' || layer.id === 'badge' || layer.id === 'volume');
+    const isItalic = layer.isItalic ?? false;
+    const fontPrefix = `${isItalic ? 'italic ' : ''}${isBold ? 'bold ' : ''}`;
 
     ctx.save();
 
@@ -362,11 +369,11 @@ export async function renderCoverToCanvas(
       ctx.shadowColor = layer.shadowColor || 'rgba(0, 0, 0, 0.85)';
       ctx.shadowBlur = Math.round(layer.shadowBlur * scale);
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = Math.round(3 * scale);
+      ctx.shadowOffsetY = Math.round(2 * scale);
     }
 
     ctx.fillStyle = layer.colorHex;
-    ctx.font = `${isBold ? 'bold ' : ''}${baseFontSizePx}px ${fontCss}`;
+    ctx.font = `${fontPrefix}${baseFontSizePx}px ${fontCss}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -430,33 +437,35 @@ export async function renderCoverToCanvas(
     ctx.restore();
   }
 
-  // 5. Decorative Title Accents (Thin gold hairline divider below title)
-  const titleLayer = layers.find((l) => l.id === 'title' && l.visible);
-  if (titleLayer) {
-    const dividerY = (h * (titleLayer.yPercent + 10)) / 100;
-    const dividerW = Math.round(frontWidth * 0.35);
-    const dividerX = frontStartX + (frontWidth - dividerW) / 2;
+  // 5. Decorative Title Accents (Thin gold hairline divider below title, optional)
+  if (hasTitleDivider) {
+    const titleLayer = layers.find((l) => l.id === 'title' && l.visible);
+    if (titleLayer) {
+      const dividerY = (h * (titleLayer.yPercent + 10)) / 100;
+      const dividerW = Math.round(frontWidth * 0.35);
+      const dividerX = frontStartX + (frontWidth - dividerW) / 2;
 
-    ctx.save();
-    ctx.strokeStyle = `${titleLayer.colorHex}60`;
-    ctx.lineWidth = Math.max(1, Math.round(2 * scale));
-    ctx.beginPath();
-    ctx.moveTo(dividerX, dividerY);
-    ctx.lineTo(dividerX + dividerW, dividerY);
-    ctx.stroke();
+      ctx.save();
+      ctx.strokeStyle = `${titleLayer.colorHex}60`;
+      ctx.lineWidth = Math.max(1, Math.round(2 * scale));
+      ctx.beginPath();
+      ctx.moveTo(dividerX, dividerY);
+      ctx.lineTo(dividerX + dividerW, dividerY);
+      ctx.stroke();
 
-    // Center diamond symbol
-    ctx.fillStyle = titleLayer.colorHex;
-    ctx.beginPath();
-    const dSize = Math.round(6 * scale);
-    const dCenter = frontStartX + frontWidth / 2;
-    ctx.moveTo(dCenter, dividerY - dSize);
-    ctx.lineTo(dCenter + dSize, dividerY);
-    ctx.lineTo(dCenter, dividerY + dSize);
-    ctx.lineTo(dCenter - dSize, dividerY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+      // Center diamond symbol
+      ctx.fillStyle = titleLayer.colorHex;
+      ctx.beginPath();
+      const dSize = Math.round(6 * scale);
+      const dCenter = frontStartX + frontWidth / 2;
+      ctx.moveTo(dCenter, dividerY - dSize);
+      ctx.lineTo(dCenter + dSize, dividerY);
+      ctx.lineTo(dCenter, dividerY + dSize);
+      ctx.lineTo(dCenter - dSize, dividerY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
   }
 }
 
