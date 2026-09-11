@@ -31,6 +31,7 @@ import {
   ChevronDown,
   Play,
   Square,
+  Palette,
 } from 'lucide-react';
 import {
   KdpPrintConfig,
@@ -64,6 +65,9 @@ interface KdpEpubExportModalProps {
   documentInfo: PdfDocumentInfo | null;
   pdfDocProxy: any | null;
   qrItems: QRCodeItem[];
+  coverImageBytes?: Uint8Array | null;
+  coverDataUrl?: string | null;
+  onOpenCoverTranslator?: () => void;
 }
 
 export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
@@ -72,6 +76,9 @@ export const KdpEpubExportModal: React.FC<KdpEpubExportModalProps> = ({
   documentInfo,
   pdfDocProxy,
   qrItems,
+  coverImageBytes,
+  coverDataUrl,
+  onOpenCoverTranslator,
 }) => {
   // Navigation Tabs
   const [activeTab, setActiveTab] = useState<'providers' | 'translation' | 'kdp-pdf' | 'epub' | 'docx'>('providers');
@@ -461,6 +468,7 @@ eMBiK365`
         },
         originalBytes: documentInfo?.data,
         qrItems,
+        coverImageBytes: coverImageBytes || undefined,
         onProgress: (cur, tot) => {
           setExportProgress({
             current: cur,
@@ -513,6 +521,7 @@ eMBiK365`
         },
         bookModel: activeBookModel,
         qrItems,
+        coverImageBytes: coverImageBytes || undefined,
         onProgress: (cur, tot) => {
           setExportProgress({
             current: cur,
@@ -671,7 +680,28 @@ eMBiK365`
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {onOpenCoverTranslator && (
+              <button
+                type="button"
+                onClick={onOpenCoverTranslator}
+                className="text-xs text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1 rounded transition cursor-pointer flex items-center gap-1.5"
+                title="Otwórz osobny moduł tłumaczenia kolorowej okładki książki"
+              >
+                {coverDataUrl ? (
+                  <>
+                    <img src={coverDataUrl} alt="Miniatura" className="w-3.5 h-4 object-cover rounded shadow border border-amber-400" />
+                    <span className="text-emerald-400 font-semibold">Okładka aktywna</span>
+                  </>
+                ) : (
+                  <>
+                    <Palette className="w-3.5 h-3.5 text-amber-400" />
+                    <span>🎨 Tłumacz Okładki</span>
+                  </>
+                )}
+              </button>
+            )}
+
             {isTranslatedActive ? (
               <div className="flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-2.5 py-1 rounded text-blue-300 text-[11px]">
                 <span>Język publikacji: <strong>{translatedBookRecord?.languageName}</strong></span>

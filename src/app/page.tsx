@@ -16,6 +16,7 @@ import { SidebarRight } from '@/components/SidebarRight';
 import { StatusBar } from '@/components/StatusBar';
 import { ProgressModal } from '@/components/ProgressModal';
 import { KdpEpubExportModal } from '@/components/KdpEpubExportModal';
+import { CoverTranslatorModal } from '@/components/CoverTranslatorModal';
 import { parsePdfDocument } from '@/lib/pdf-service';
 import { generateSyntheticA5Pdf } from '@/lib/sample-pdf';
 import { generateQRDataUrl, resolvePageContent, interpolateQRText } from '@/lib/qr-generator';
@@ -78,6 +79,9 @@ export default function Home() {
   });
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isKdpModalOpen, setIsKdpModalOpen] = useState<boolean>(false);
+  const [isCoverModalOpen, setIsCoverModalOpen] = useState<boolean>(false);
+  const [coverImageBytes, setCoverImageBytes] = useState<Uint8Array | null>(null);
+  const [coverDataUrl, setCoverDataUrl] = useState<string | null>(null);
   const [modifiedPdfBlobUrl, setModifiedPdfBlobUrl] = useState<string | null>(null);
 
   const currentPageDim = documentInfo?.pages[currentPage - 1] || {
@@ -514,6 +518,8 @@ export default function Home() {
         onGenerateSample={handleGenerateSample}
         onExportClick={handleExportClick}
         onOpenKdpEpubModal={() => setIsKdpModalOpen(true)}
+        onOpenCoverTranslator={() => setIsCoverModalOpen(true)}
+        hasCover={Boolean(coverImageBytes)}
         isProcessing={progress.status === 'processing'}
         targetPagesCount={totalTargetedPages}
       />
@@ -573,6 +579,8 @@ export default function Home() {
           onApplyPreset={handleApplyPreset}
           onExportClick={handleExportClick}
           onOpenKdpEpubModal={() => setIsKdpModalOpen(true)}
+          onOpenCoverTranslator={() => setIsCoverModalOpen(true)}
+          hasCover={Boolean(coverImageBytes)}
           onPageChange={(p) => setCurrentPage(p)}
           isProcessing={progress.status === 'processing'}
           qrPreviewUrl={qrPreviews[activeQRId]}
@@ -604,6 +612,22 @@ export default function Home() {
         documentInfo={documentInfo}
         pdfDocProxy={pdfDocProxy}
         qrItems={qrItems}
+        coverImageBytes={coverImageBytes || undefined}
+        coverDataUrl={coverDataUrl || undefined}
+        onOpenCoverTranslator={() => setIsCoverModalOpen(true)}
+      />
+
+      {/* 6. Dedicated Full-Color Cover Translation Studio Modal */}
+      <CoverTranslatorModal
+        isOpen={isCoverModalOpen}
+        onClose={() => setIsCoverModalOpen(false)}
+        documentInfo={documentInfo}
+        pdfDocProxy={pdfDocProxy}
+        initialTitle={documentInfo?.name?.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ') || 'Tytuł Książki'}
+        onApplyCoverToPublishing={(bytes, dataUrl) => {
+          setCoverImageBytes(bytes);
+          setCoverDataUrl(dataUrl);
+        }}
       />
     </div>
   );

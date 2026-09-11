@@ -30,6 +30,7 @@ import {
   ChevronRight,
   BookOpen,
   Globe,
+  Palette,
 } from 'lucide-react';
 import {
   QRCodeItem,
@@ -72,6 +73,8 @@ interface SidebarRightProps {
   onApplyPreset: (preset: AlignmentPreset) => void;
   onExportClick: () => void;
   onOpenKdpEpubModal?: () => void;
+  onOpenCoverTranslator?: () => void;
+  hasCover?: boolean;
   onPageChange: (page: number) => void;
   isProcessing: boolean;
   qrPreviewUrl?: string;
@@ -103,6 +106,8 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
   onApplyPreset,
   onExportClick,
   onOpenKdpEpubModal,
+  onOpenCoverTranslator,
+  hasCover,
   onPageChange,
   isProcessing,
   qrPreviewUrl,
@@ -1098,6 +1103,22 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
               className="w-full py-1.5 px-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-[10px] font-medium rounded border border-zinc-700 flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <FilePlus className="w-3 h-3 text-blue-400" /> Wstaw nową stronę tytułową z QR (+1 str.)
+            </button>
+          )}
+
+          {/* Color Cover Translator Button */}
+          {onOpenCoverTranslator && (
+            <button
+              type="button"
+              onClick={onOpenCoverTranslator}
+              className={`w-full py-2 px-3 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer border ${
+                hasCover
+                  ? 'bg-emerald-950/80 text-emerald-300 border-emerald-500/40 hover:bg-emerald-900'
+                  : 'bg-zinc-900 hover:bg-zinc-800 text-amber-300 border-amber-500/30'
+              }`}
+            >
+              <Palette className="w-3.5 h-3.5 text-amber-400" />
+              <span>{hasCover ? '🎨 Kolorowa Okładka (Aktywna)' : '🎨 Tłumacz Kolorowej Okładki'}</span>
             </button>
           )}
 

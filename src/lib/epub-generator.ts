@@ -22,11 +22,13 @@ export async function generateEpubPackage({
   config,
   bookModel,
   qrItems = [],
+  coverImageBytes,
   onProgress,
 }: {
   config: EpubConfig;
   bookModel: ExtractedBookModel;
   qrItems?: QRCodeItem[];
+  coverImageBytes?: Uint8Array;
   onProgress?: (progress: number, total: number) => void;
 }): Promise<Uint8Array> {
   const zip = new JSZip();
@@ -197,6 +199,29 @@ nav#toc a {
   const bookUuid = config.identifier || `urn:uuid:${Math.random().toString(36).substring(2)}-${Date.now()}`;
   const nowIso = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
 
+  // 3.5 Optional Book Cover Image (cover.jpg + cover.xhtml)
+  const hasCover = Boolean(coverImageBytes && coverImageBytes.length > 0);
+  if (hasCover) {
+    zip.file('OEBPS/images/cover.jpg', coverImageBytes!);
+    const coverXhtml = `<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="${lang}">
+<head>
+  <title>Okładka</title>
+  <style type="text/css">
+    body { margin: 0; padding: 0; text-align: center; background-color: #000; }
+    img.cover-img { max-width: 100%; max-height: 100vh; height: auto; object-fit: contain; margin: 0 auto; display: block; }
+  </style>
+</head>
+<body epub:type="cover">
+  <div style="text-align: center;">
+    <img src="../images/cover.jpg" alt="Okładka" class="cover-img"/>
+  </div>
+</body>
+</html>`;
+    zip.file('OEBPS/text/cover.xhtml', coverXhtml);
+  }
+
   // 4. Generate Title Page
   const titleXhtml = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -349,12 +374,23 @@ ${navListItems}
   zip.file('OEBPS/nav.xhtml', navXhtml);
 
   // 8. NCX Document (EPUB 2 compatibility)
-  let ncxPoints = `    <navPoint id="np-0" playOrder="1">
+  let ncxPoints = '';
+  let playOrder = 1;
+
+  if (hasCover) {
+    ncxPoints += `    <navPoint id="np-cover" playOrder="${playOrder}">
+      <navLabel><text>Okładka</text></navLabel>
+      <content src="text/cover.xhtml"/>
+    </navPoint>\n`;
+    playOrder++;
+  }
+
+  ncxPoints += `    <navPoint id="np-title" playOrder="${playOrder}">
       <navLabel><text>Strona tytułowa</text></navLabel>
       <content src="text/title.xhtml"/>
     </navPoint>\n`;
+  playOrder++;
 
-  let playOrder = 2;
   for (const ch of chapterFiles) {
     ncxPoints += `    <navPoint id="np-${playOrder - 1}" playOrder="${playOrder}">
       <navLabel><text>${escapeXml(ch.title)}</text></navLabel>
@@ -385,6 +421,11 @@ ${ncxPoints}
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
     <item id="titlepage" href="text/title.xhtml" media-type="application/xhtml+xml"/>\n`;
 
+  if (hasCover) {
+    manifestItems += `    <item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image"/>\n`;
+    manifestItems += `    <item id="cover" href="text/cover.xhtml" media-type="application/xhtml+xml"/>\n`;
+  }
+
   for (const ch of chapterFiles) {
     manifestItems += `    <item id="${ch.id}" href="text/${ch.filename}" media-type="application/xhtml+xml"/>\n`;
   }
@@ -393,7 +434,11 @@ ${ncxPoints}
     manifestItems += `    <item id="${qr.id}" href="images/${qr.filename}" media-type="image/png"/>\n`;
   }
 
-  let spineItems = `    <itemref idref="titlepage"/>\n`;
+  let spineItems = '';
+  if (hasCover) {
+    spineItems += `    <itemref idref="cover"/>\n`;
+  }
+  spineItems += `    <itemref idref="titlepage"/>\n`;
   for (const ch of chapterFiles) {
     spineItems += `    <itemref idref="${ch.id}"/>\n`;
   }
@@ -406,6 +451,7 @@ ${ncxPoints}
     <dc:language>${lang}</dc:language>
     <dc:creator>${escapeXml(author)}</dc:creator>
     <meta property="dcterms:modified">${nowIso}</meta>
+    ${hasCover ? '<meta name="cover" content="cover-image"/>' : ''}
   </metadata>
   <manifest>
 ${manifestItems}

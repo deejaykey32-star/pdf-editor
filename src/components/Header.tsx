@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   BookOpen,
   Globe,
+  Palette,
 } from 'lucide-react';
 import { PdfDocumentInfo } from '@/types/pdf';
 
@@ -19,6 +20,8 @@ interface HeaderProps {
   onGenerateSample: (count: number) => void;
   onExportClick: () => void;
   onOpenKdpEpubModal?: () => void;
+  onOpenCoverTranslator?: () => void;
+  hasCover?: boolean;
   isProcessing: boolean;
   targetPagesCount: number;
 }
@@ -29,6 +32,8 @@ export const Header: React.FC<HeaderProps> = ({
   onGenerateSample,
   onExportClick,
   onOpenKdpEpubModal,
+  onOpenCoverTranslator,
+  hasCover,
   isProcessing,
   targetPagesCount,
 }) => {
@@ -131,6 +136,26 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Color Cover Translator Button */}
+        {onOpenCoverTranslator && (
+          <button
+            onClick={onOpenCoverTranslator}
+            disabled={!documentInfo}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-md shadow-sm transition flex items-center gap-1.5 ${
+              !documentInfo
+                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-zinc-700/50'
+                : hasCover
+                ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900 cursor-pointer'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-amber-300 hover:text-amber-200 border border-amber-500/30 cursor-pointer'
+            }`}
+            title="Otwórz osobny moduł projektowania i tłumaczenia kolorowej okładki książki"
+          >
+            <Palette className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">🎨 Kolorowa Okładka</span>
+            <span className="sm:hidden">Okładka</span>
+          </button>
+        )}
 
         {/* Amazon KDP, Empik, Legimi POD & Translation Studio Button */}
         <button

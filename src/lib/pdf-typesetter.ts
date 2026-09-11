@@ -11,6 +11,7 @@ export interface GenerateKdpPdfOptions {
   bookModel: ExtractedBookModel;
   originalBytes?: Uint8Array;
   qrItems?: QRCodeItem[];
+  coverImageBytes?: Uint8Array;
   onProgress?: (current: number, total: number) => void;
 }
 
@@ -213,6 +214,7 @@ export async function generateKdpA5PrintPdf({
   bookModel,
   originalBytes,
   qrItems = [],
+  coverImageBytes,
   onProgress,
 }: GenerateKdpPdfOptions): Promise<Uint8Array> {
   const pdfDoc = await PDFDocument.create();
@@ -739,6 +741,31 @@ export async function generateKdpA5PrintPdf({
       } catch (err) {
         console.warn('Failed to embed QR in KDP PDF:', err);
       }
+    }
+  }
+
+  // Prepend color book cover if provided
+  if (coverImageBytes && coverImageBytes.length > 0) {
+    try {
+      let coverImage;
+      try {
+        coverImage = await pdfDoc.embedJpg(coverImageBytes);
+      } catch {
+        coverImage = await pdfDoc.embedPng(coverImageBytes);
+      }
+      const coverPage = pdfDoc.insertPage(0, [pageWidthPt, pageHeightPt]);
+      if (hasBleed) {
+        coverPage.setTrimBox(bleedPt, bleedPt, A5_WIDTH_PT, A5_HEIGHT_PT);
+        coverPage.setBleedBox(0, 0, pageWidthPt, pageHeightPt);
+      }
+      coverPage.drawImage(coverImage, {
+        x: 0,
+        y: 0,
+        width: pageWidthPt,
+        height: pageHeightPt,
+      });
+    } catch (err) {
+      console.warn('Could not embed cover image into PDF:', err);
     }
   }
 
