@@ -78,6 +78,17 @@ export function getCoverDimensions(
   spineWidthMm: number = 12,
   bleedMm: number = 3.0
 ): CoverDimensions {
+  if (mode === 'widoki-cover') {
+    return {
+      widthPx: 1528,
+      heightPx: 2048,
+      widthMm: 152.8,
+      heightMm: 204.8,
+      dpi: 300,
+      label: 'Wzorzec Okładki (1528 × 2048 px — 100% Proporcje Grafiki)',
+    };
+  }
+
   if (mode === 'ebook-front') {
     return {
       widthPx: 1600,
@@ -428,6 +439,20 @@ export async function renderCoverToCanvas(
     const lineSpacingPx = baseFontSizePx * (layer.lineHeight || 1.25);
     const totalBlockHeight = lines.length * lineSpacingPx;
     const startY = targetY - (totalBlockHeight / 2) + (lineSpacingPx / 2);
+
+    // Render soft halo outline if shadow color is defined
+    if (layer.hasShadow && layer.shadowColor) {
+      ctx.save();
+      ctx.strokeStyle = layer.shadowColor;
+      ctx.lineWidth = Math.max(2, Math.round(5 * scale));
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      for (let i = 0; i < lines.length; i++) {
+        const lineY = startY + i * lineSpacingPx;
+        ctx.strokeText(lines[i], targetX, lineY);
+      }
+      ctx.restore();
+    }
 
     for (let i = 0; i < lines.length; i++) {
       const lineY = startY + i * lineSpacingPx;

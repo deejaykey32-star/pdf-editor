@@ -1,4 +1,4 @@
-export type CoverFormatMode = 'ebook-front' | 'a5-front' | 'a5-spread';
+export type CoverFormatMode = 'widoki-cover' | 'ebook-front' | 'a5-front' | 'a5-spread';
 
 export type CoverFontFamily = 'playfair' | 'georgia' | 'cinzel' | 'montserrat' | 'inter';
 
