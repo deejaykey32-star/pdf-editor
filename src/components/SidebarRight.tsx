@@ -29,6 +29,7 @@ import {
   ChevronLeft,
   ChevronRight,
   BookOpen,
+  Globe,
 } from 'lucide-react';
 import {
   QRCodeItem,
@@ -1100,15 +1101,15 @@ export const SidebarRight: React.FC<SidebarRightProps> = ({
             </button>
           )}
 
-          {/* Amazon KDP & ePUB Studio Button */}
+          {/* Amazon KDP, Empik, Legimi POD & Translation Studio Button */}
           {onOpenKdpEpubModal && (
             <button
               type="button"
               onClick={onOpenKdpEpubModal}
-              className="w-full py-2.5 px-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition cursor-pointer"
+              className="w-full py-2.5 px-3 bg-gradient-to-r from-amber-600 via-indigo-600 to-blue-600 hover:from-amber-500 hover:to-blue-500 text-white font-semibold rounded-lg text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 transition cursor-pointer"
             >
-              <BookOpen className="w-4 h-4 text-white" />
-              <span>Studio Wydawnicze KDP & eBook</span>
+              <Globe className="w-4 h-4 text-amber-300" />
+              <span>Wydawcy POD (0 zł) & Tłumacz</span>
             </button>
           )}
 

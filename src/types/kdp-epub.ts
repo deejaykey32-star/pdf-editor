@@ -76,4 +76,72 @@ export interface ExtractedBookModel {
   chapters: ExtractedChapter[];
   totalWords: number;
   sourcePageCount: number;
+  language?: string;
+}
+
+// ----------------------------------------------------
+// POD / SELF-PUBLISHING & EBOOK PROVIDERS
+// ----------------------------------------------------
+export type ProviderId =
+  | 'empik'
+  | 'legimi'
+  | 'amazon-kdp'
+  | 'ridero'
+  | 'draft2digital'
+  | 'lulu'
+  | 'rozpisani'
+  | 'universal';
+
+export type ProviderCategory = 'pod' | 'ebook' | 'hybrid';
+
+export interface SelfPublishingProvider {
+  id: ProviderId;
+  name: string;
+  shortName: string;
+  badge: string;
+  category: ProviderCategory;
+  zeroCostStart: boolean;
+  zeroCostDetails: string;
+  isbnPolicy: string;
+  distributionChannels: string[];
+  royaltiesInfo: string;
+  bleedRequirementMm: number;
+  hasBleed: boolean;
+  recommendedGutterMm: number;
+  recommendedOuterMarginMm: number;
+  recommendedTopBottomMm: number;
+  supportedFormats: ('PDF' | 'ePUB' | 'DOCX')[];
+  portalUrl: string;
+  description: string;
+  guideSteps: string[];
+  accentColor: string;
+}
+
+// ----------------------------------------------------
+// TRANSLATION ENGINE TYPES
+// ----------------------------------------------------
+export interface TranslationLanguage {
+  code: string;
+  name: string;
+  nativeName: string;
+  flag: string;
+}
+
+export interface TranslationProgress {
+  status: 'idle' | 'translating' | 'completed' | 'error';
+  currentChapter: number;
+  totalChapters: number;
+  currentParagraph: number;
+  totalParagraphs: number;
+  percent: number;
+  currentTextSample?: string;
+  targetLang: string;
+  error?: string;
+}
+
+export interface TranslatedBookRecord {
+  languageCode: string;
+  languageName: string;
+  model: ExtractedBookModel;
+  translatedAt: string;
 }
